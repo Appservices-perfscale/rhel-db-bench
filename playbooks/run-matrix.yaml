@@ -1,0 +1,89 @@
+---
+# Matrix driver: run playbooks/site.yml once per (virtual_users, run_index).
+#
+# From project root:
+#   ansible-playbook playbooks/run-matrix.yaml
+#
+# Override VU list or how many repeats per VU:
+#   ansible-playbook playbooks/run-matrix.yaml -e 'virtual_users_list=[8,16,32]' -e 'run_count=2'
+#
+# Override inventory or results parent directory:
+#   ansible-playbook playbooks/run-matrix.yaml -e 'matrix_inventory=/path/to/inventory.ini'
+#   ansible-playbook playbooks/run-matrix.yaml -e 'matrix_results_subdir=results/matrix-20260411'
+#
+# Each iteration sets perf_run_stamp (controller clock) so artifacts get unique names under perf_results_path:
+#   <stamp>-benchmark-report.json, <stamp>-host-metrics-samples.log (bench),
+#   <stamp>-client-host-metrics-samples.log (load generator), etc.
+
+- name: Run HammerDB / site.yml matrix over virtual users and repeat count
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    virtual_users_list: [ 28 ]
+    run_count: 1
+    project_root: "{{ playbook_dir ~ '/..' }}"
+    matrix_inventory: "{{ matrix_inventory_override | default(project_root ~ '/inventory.ini') }}"
+    results_dir: "{{ project_root }}/{{ matrix_results_subdir | default('results') }}"
+    archive_dir: "{{ results_dir }}/archive"
+
+  tasks:
+    - name: Ensure results and archive directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ results_dir }}"
+        - "{{ archive_dir }}"
+
+    - name: Run site.yml for each (VU, run)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        VU="{{ item[0] }}"
+        RUN="{{ item[1] }}"
+        RUN_TS="$(date +%Y%m%d-%H%M%S)"
+        INSTANCE_SAFE="vu${VU}_run${RUN}_${RUN_TS}"
+        LOGFILE="${INSTANCE_SAFE}.log"
+        ARCHIVE_SUBDIR="{{ archive_dir }}/${INSTANCE_SAFE}"
+
+        mkdir -p "{{ results_dir }}" "${ARCHIVE_SUBDIR}"
+
+        {
+          echo "========== Matrix: VU=${VU} repeat=${RUN} stamp=${RUN_TS} =========="
+          cd "{{ project_root }}"
+
+          INV_ARGS=( -i "{{ matrix_inventory }}" )
+          if [ -f "{{ project_root }}/inventory.local.ini" ]; then
+            INV_ARGS+=( -i "{{ project_root }}/inventory.local.ini" )
+          fi
+          ansible-playbook "${INV_ARGS[@]}" playbooks/site.yml \
+            -e "hammerdb_virtual_users=${VU}" \
+            -e "perf_results_path={{ results_dir }}" \
+            -e "perf_run_stamp=${RUN_TS}"
+
+          for f in \
+            "{{ results_dir }}/${RUN_TS}-benchmark-report.json" \
+            "{{ results_dir }}/${RUN_TS}-host-metrics-samples.log" \
+            "{{ results_dir }}/${RUN_TS}-client-host-metrics-samples.log"; do
+            [ -f "$f" ] && cp -f "$f" "${ARCHIVE_SUBDIR}/" || true
+          done
+        } 2>&1 | tee "{{ results_dir }}/${LOGFILE}"
+        cp -f "{{ results_dir }}/${LOGFILE}" "${ARCHIVE_SUBDIR}/" || true
+        exit "${PIPESTATUS[0]}"
+      args:
+        executable: /bin/bash
+      loop: "{{ virtual_users_list | product(range(1, (run_count | int) + 1)) | list }}"
+      loop_control:
+        label: "vu{{ item[0] }} run{{ item[1] }}"
+      register: matrix_run
+      ignore_errors: true
+
+    - name: Show failed matrix runs (if any)
+      ansible.builtin.debug:
+        msg: >-
+          Failed: vu={{ item.item[0] }} run={{ item.item[1] }} —
+          {{ (item.stderr_lines | default([])) | last | default(item.msg | default('unknown')) }}
+      loop: "{{ matrix_run.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+      when: (matrix_run.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list) | length > 0

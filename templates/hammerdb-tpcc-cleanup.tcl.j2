@@ -1,0 +1,16 @@
+dbset db pg
+dbset bm {{ hammerdb_benchmark }}
+diset connection pg_host {{ pgsql_host }}
+diset connection pg_port {{ pgsql_port | string }}
+diset tpcc pg_num_vu {{ hammerdb_virtual_users }}
+diset tpcc pg_count_ware {{ hammerdb_warehouses }}
+diset tpcc pg_defaultdbase postgres
+diset tpcc pg_superuser {{ pgsql_superuser }}
+diset tpcc pg_superuserpass {{ pgsql_superuser_password }}
+diset tpcc pg_user {{ pgsql_benchmark_user }}
+diset tpcc pg_pass {{ pgsql_benchmark_password }}
+diset tpcc pg_dbase {{ pgsql_benchmark_db }}
+
+deleteschema
+
+exit

@@ -1,0 +1,111 @@
+---
+- name: Backup PostgreSQL GUCs and postgresql.auto.conf before tuning
+  hosts: bench
+  gather_facts: true
+  vars:
+    _pgsql_connect_host: "{{ pgsql_admin_connect_host | default(pgsql_listen_addresses.split(',')[0] | trim) }}"
+    _pgsql_low_variance_setting_names:
+      - work_mem
+      - maintenance_work_mem
+      - bgwriter_lru_maxpages
+      - bgwriter_flush_after
+      - fsync
+      - synchronous_commit
+      - checkpoint_timeout
+      - checkpoint_completion_target
+      - max_wal_size
+      - min_wal_size
+      - random_page_cost
+      - cpu_tuple_cost
+      - effective_cache_size
+      - log_min_duration_statement
+      - autovacuum
+      - autovacuum_max_workers
+      - autovacuum_vacuum_cost_limit
+      - lc_messages
+      - log_checkpoints
+    _backup_results_dir: >-
+      {{ (perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
+    _backup_stamp: "{{ ansible_date_time.date }}T{{ ansible_date_time.time | replace(':', '') }}"
+    pgsql_settings_backup_basename: "pgsql-settings-backup-{{ inventory_hostname }}-{{ _backup_stamp }}.json"
+
+  tasks:
+    - name: Read current values from pg_settings for tuned GUCs
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        db: postgres
+        query: >-
+          SELECT name, setting, unit, source, sourcefile, sourceline,
+                 boot_val, reset_val, pending_restart
+          FROM pg_settings
+          WHERE name IN ('{{ _pgsql_low_variance_setting_names | join("','") }}')
+          ORDER BY 1;
+      register: pgsql_settings_snapshot
+
+    - name: Fetch PostgreSQL server version string
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        db: postgres
+        query: SELECT version() AS version;
+      register: pgsql_version_row
+
+    - name: Check for postgresql.auto.conf (ALTER SYSTEM file)
+      ansible.builtin.stat:
+        path: "{{ pgsql_data_dir }}/postgresql.auto.conf"
+      register: pgsql_auto_conf_stat
+
+    - name: Slurp postgresql.auto.conf when present
+      ansible.builtin.slurp:
+        src: "{{ pgsql_data_dir }}/postgresql.auto.conf"
+      register: pgsql_auto_conf_slurp
+      when: pgsql_auto_conf_stat.stat.exists | default(false)
+
+    - name: Decode postgresql.auto.conf for backup payload
+      ansible.builtin.set_fact:
+        _pgsql_auto_conf_plain: "{{ pgsql_auto_conf_slurp.content | b64decode }}"
+      when: pgsql_auto_conf_stat.stat.exists | default(false)
+
+    - name: Build backup document
+      ansible.builtin.set_fact:
+        pgsql_settings_backup_doc:
+          playbook_note: >-
+            Snapshot of settings touched by playbooks/site.yml low-variance tuning.
+            GUC list key _pgsql_low_variance_setting_names in backup-pgsql-settings.yml.
+          captured_at: "{{ _backup_stamp }}"
+          bench_inventory_hostname: "{{ inventory_hostname }}"
+          connect_host: "{{ _pgsql_connect_host }}"
+          port: "{{ pgsql_port | int }}"
+          data_directory: "{{ pgsql_data_dir }}"
+          server_version: "{{ (pgsql_version_row.query_result | default([]) | first).version | default('') }}"
+          pg_settings_rows: "{{ pgsql_settings_snapshot.query_result | default([]) }}"
+          postgresql_auto_conf_present: "{{ pgsql_auto_conf_stat.stat.exists | default(false) }}"
+          postgresql_auto_conf_text: "{{ _pgsql_auto_conf_plain | default('') }}"
+
+    - name: Ensure backup directory exists on controller
+      ansible.builtin.file:
+        path: "{{ _backup_results_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Write backup JSON on controller
+      ansible.builtin.copy:
+        dest: "{{ _backup_results_dir }}/{{ pgsql_settings_backup_basename }}"
+        content: "{{ pgsql_settings_backup_doc | to_nice_json }}\n"
+        mode: "0644"
+      delegate_to: localhost
+      connection: local
+      become: false
+
+    - name: Show backup path
+      ansible.builtin.debug:
+        msg: "Wrote {{ _backup_results_dir }}/{{ pgsql_settings_backup_basename }} on the Ansible controller."

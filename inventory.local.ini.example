@@ -1,0 +1,8 @@
+# Copy to inventory.local.ini and fill in real values. That file is gitignored.
+# Ansible merges this with inventory.ini (same host names).
+
+[bench]
+bench-vm ansible_host=bench.example.com ansible_ssh_pass=CHANGEME
+
+[client]
+client-vm ansible_host=client.example.com ansible_ssh_pass=CHANGEME

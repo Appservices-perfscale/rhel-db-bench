@@ -1,0 +1,6 @@
+# Ansible
+collections/
+.ansible/
+*.retry
+inventory.local.ini
+
