@@ -1,0 +1,505 @@
+---
+# Schedule ScaleLab hosts via QUADS self-scheduling API (bench + client for DB-CPT).
+#
+# From project root:
+#   ansible-playbook playbooks/auto-schedule.yaml -e "workload_name='DB-CPT run'"
+#
+# Optional:
+#   -e num_hosts=2          (default: 2)
+#   -e schedule_servers=host1.example.com,host2.example.com  (pin exact hostnames)
+#
+# Host class: set preferred_models in quads_cfg.yaml (list, e.g. [r650]) or "all" for any model.
+# Same-rack only: bench + client must share a rack prefix (e.g. f24-h07 + f24-h08, not f24 + f27).
+# Override in quads_cfg.yaml: preferred_rack, preferred_bench_host, preferred_client_host.
+#
+# Writes ../scalelab_assignment.yml and ../inventory.local.ini (1st host=bench, 2nd=client).
+# Teardown: playbooks/scalelab-cleanup.yaml
+
+- name: ScaleLab QUADS scheduling
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    num_hosts: 2
+    wipe: "true"
+    qinq: 0
+    project_root: "{{ playbook_dir }}/.."
+    inventory_local_path: "{{ project_root }}/inventory.local.ini"
+
+  vars_files:
+    - ../quads_cfg.yaml
+
+  pre_tasks:
+    - name: Ensure workload_name is provided
+      ansible.builtin.assert:
+        that:
+          - workload_name is defined
+          - workload_name | trim | length > 0
+        fail_msg: >-
+          Provide a description, e.g. -e "workload_name='DB-CPT RHEL baseline'"
+      changed_when: false
+
+    - name: Validate num_hosts
+      ansible.builtin.assert:
+        that:
+          - num_hosts | int >= 2
+        fail_msg: "num_hosts must be at least 2 (bench + client). Got {{ num_hosts }}."
+      changed_when: false
+
+    - name: Stat existing inventory.local.ini for password reuse
+      ansible.builtin.stat:
+        path: "{{ inventory_local_path }}"
+      register: inventory_local_stat
+
+    - name: Resolve ScaleLab SSH password for inventory
+      ansible.builtin.set_fact:
+        _scalelab_ssh_pass: >-
+          {{
+            scalelab_ssh_pass | default('') | trim
+            if (scalelab_ssh_pass | default('') | trim | length) > 0
+            else (
+              lookup('file', inventory_local_path)
+              | regex_search('ansible_ssh_pass=(\\S+)', '\\1')
+              | default('', true)
+              if inventory_local_stat.stat.exists
+              else ''
+            )
+          }}
+      no_log: true
+
+    - name: Require SSH password for inventory.local.ini
+      ansible.builtin.assert:
+        that:
+          - _scalelab_ssh_pass | trim | length > 0
+        fail_msg: >-
+          Set scalelab_ssh_pass in quads_cfg.yaml, or keep ansible_ssh_pass in inventory.local.ini
+          before re-running schedule.
+      changed_when: false
+
+    - name: Validate preferred_models when provided as a list
+      when:
+        - preferred_models is defined
+        - preferred_models is not string
+      ansible.builtin.assert:
+        that:
+          - preferred_models is iterable
+          - preferred_models is not mapping
+          - preferred_models | length > 0
+        fail_msg: >-
+          preferred_models must be a non-empty list (e.g. [r650, r660]) or the string "all".
+      changed_when: false
+
+  tasks:
+    - name: Set API variables
+      ansible.builtin.set_fact:
+        quads_user_email: "{{ quads_username }}@{{ quads_user_domain }}"
+        base_api_url: "https://{{ quads_api_server }}/api/v3"
+      changed_when: false
+
+    - name: Register user with QUADS server
+      no_log: true
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/register"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ quads_user_email }}"
+          password: "{{ quads_password }}"
+        validate_certs: false
+        status_code: [200, 201, 409, 401]
+
+    - name: Log in to QUADS API
+      no_log: true
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/login/"
+        method: POST
+        url_username: "{{ quads_user_email }}"
+        url_password: "{{ quads_password }}"
+        validate_certs: false
+        status_code: 200
+      register: login_result
+
+    - name: Fail when login did not succeed
+      ansible.builtin.fail:
+        msg: >-
+          QUADS login failed for {{ quads_username }}@{{ quads_user_domain }}.
+          Check quads_api_server, quads_username, quads_user_domain, and quads_password in quads_cfg.yaml.
+      when: login_result.status | default(0) != 200
+
+    - name: Set authentication token
+      ansible.builtin.set_fact:
+        quads_token: "{{ login_result.json.auth_token }}"
+      changed_when: false
+
+    - name: Get available self-schedulable hosts
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/available?can_self_schedule=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: 200
+      register: available_hosts
+
+    - name: Use explicitly requested hostnames
+      when: schedule_servers is defined
+      ansible.builtin.set_fact:
+        hosts_to_schedule: "{{ schedule_servers.split(',') | map('trim') | map('community.general.dict_kv', 'name') | list }}"
+        host_selection_mode: pinned_hostnames
+      changed_when: false
+
+    - name: Get available hosts per preferred model
+      when:
+        - schedule_servers is not defined
+        - preferred_models is defined
+        - preferred_models is not string
+        - preferred_models is iterable
+        - preferred_models is not mapping
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/available?can_self_schedule=true&model={{ item | upper }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: 200
+      loop: "{{ preferred_models }}"
+      loop_control:
+        label: "{{ item | upper }}"
+      register: available_by_model
+
+    - name: Build candidate hostname pool (model preference order)
+      when:
+        - schedule_servers is not defined
+        - preferred_models is defined
+        - preferred_models is not string
+        - available_by_model is defined
+      ansible.builtin.set_fact:
+        candidate_hostnames: "{{ pool_json | from_json }}"
+        candidate_pool_mode: preferred_models
+      vars:
+        pool_json: >-
+          {%- set result = [] -%}
+          {%- for model_result in available_by_model.results | default([]) -%}
+            {%- set hosts = model_result.json | default([]) -%}
+            {%- if hosts is sequence and hosts is not string -%}
+              {%- for host in hosts -%}
+                {%- if host not in result -%}
+                  {%- set _ = result.append(host) -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ result | to_json }}
+      changed_when: false
+
+    - name: Build candidate hostname pool (any model)
+      when:
+        - schedule_servers is not defined
+        - preferred_models is not defined or preferred_models is string
+      ansible.builtin.set_fact:
+        candidate_hostnames: "{{ available_hosts.json | default([]) }}"
+        candidate_pool_mode: any_available
+      changed_when: false
+
+    - name: Select same-rack hosts from candidate pool
+      when: schedule_servers is not defined
+      ansible.builtin.set_fact:
+        hosts_to_schedule: "{{ _selection.selected }}"
+        host_selection_mode: "{{ _selection.mode }}"
+        selected_rack: "{{ _selection.rack }}"
+        host_selection_error: "{{ _selection.error }}"
+      vars:
+        needed: "{{ num_hosts | int }}"
+        pref_rack: "{{ preferred_rack | default('') | trim }}"
+        pref_bench: "{{ preferred_bench_host | default('') | trim }}"
+        pref_client: "{{ preferred_client_host | default('') | trim }}"
+        _selection: "{{ selection_json | from_json }}"
+        selection_json: >-
+          {%- set ns = namespace(
+            chosen=[],
+            rack='',
+            mode=candidate_pool_mode | default('unknown'),
+            error=''
+          ) -%}
+          {%- set needed_n = needed | int -%}
+          {%- set pool = [] -%}
+          {%- for h in candidate_hostnames | default([]) -%}
+            {%- set rack = h | split('-') | first | trim -%}
+            {%- if rack | length > 0 -%}
+              {%- set _ = pool.append({'name': h, 'rack': rack}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- if pref_bench | length > 0 or pref_client | length > 0 -%}
+            {%- if pref_bench | length == 0 or pref_client | length == 0 -%}
+              {%- set ns.error = 'set both preferred_bench_host and preferred_client_host' -%}
+            {%- else -%}
+              {%- set bench_rack = pref_bench | split('-') | first | trim -%}
+              {%- set client_rack = pref_client | split('-') | first | trim -%}
+              {%- if bench_rack != client_rack or bench_rack == '' -%}
+                {%- set ns.error = 'bench and client must share a rack prefix (e.g. f24-h07 + f24-h08)' -%}
+              {%- elif pref_rack | length > 0 and bench_rack != pref_rack -%}
+                {%- set ns.error = 'preferred hosts are rack ' ~ bench_rack ~ ' but preferred_rack is ' ~ pref_rack -%}
+              {%- else -%}
+                {%- set pool_names = pool | map(attribute='name') | list -%}
+                {%- if pref_bench not in pool_names or pref_client not in pool_names -%}
+                  {%- set ns.error = 'preferred hosts not in available pool' -%}
+                {%- else -%}
+                  {%- set ns.chosen = [{'name': pref_bench}, {'name': pref_client}] -%}
+                  {%- set ns.rack = bench_rack -%}
+                  {%- set ns.mode = 'preferred_hosts' -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- else -%}
+            {%- set racks = pool | map(attribute='rack') | unique | list -%}
+            {%- if pref_rack | length > 0 -%}
+              {%- set racks = [pref_rack] -%}
+            {%- endif -%}
+            {%- for rack in racks -%}
+              {%- if ns.chosen | length == 0 -%}
+                {%- set rack_hosts = pool | selectattr('rack', 'equalto', rack) | list -%}
+                {%- if rack_hosts | length >= needed_n -%}
+                  {%- set ns.chosen = [] -%}
+                  {%- for rh in rack_hosts[:needed_n] -%}
+                    {%- set _ = ns.chosen.append({'name': rh.name}) -%}
+                  {%- endfor -%}
+                  {%- set ns.rack = rack -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if ns.chosen | length == 0 -%}
+              {%- set ns.error = 'no rack has ' ~ needed_n ~ ' available host(s) in the candidate pool' -%}
+            {%- endif -%}
+          {%- endif -%}
+          {{
+            {
+              'selected': ns.chosen,
+              'mode': ns.mode,
+              'rack': ns.rack,
+              'error': ns.error
+            } | to_json
+          }}
+      changed_when: false
+
+    - name: Fail when same-rack host selection failed
+      when:
+        - schedule_servers is not defined
+        - host_selection_error | default('') | length > 0
+      ansible.builtin.fail:
+        msg: "{{ host_selection_error }}"
+
+    - name: Validate pinned hostnames share one rack
+      when: schedule_servers is defined
+      ansible.builtin.assert:
+        that:
+          - pinned_racks | unique | length == 1
+          - pinned_racks[0] | length > 0
+          - (preferred_rack | default('') | trim | length == 0) or (pinned_racks[0] == (preferred_rack | trim))
+        fail_msg: >-
+          All hosts in schedule_servers must share one rack prefix (e.g. f24-h07 + f24-h08, not f24 + f27).
+          Racks seen: {{ pinned_racks | unique | list | join(', ') }}.
+          {% if preferred_rack is defined and (preferred_rack | trim | length) > 0 %}
+          preferred_rack is {{ preferred_rack | trim }}.
+          {% endif %}
+      vars:
+        pinned_hostnames: "{{ schedule_servers.split(',') | map('trim') | list }}"
+        pinned_racks: "{{ pinned_hostnames | map('split', '-') | map('first') | list }}"
+      changed_when: false
+
+    - name: Set rack fact for pinned hostnames
+      when: schedule_servers is defined
+      ansible.builtin.set_fact:
+        selected_rack: "{{ pinned_racks[0] }}"
+      vars:
+        pinned_hostnames: "{{ schedule_servers.split(',') | map('trim') | list }}"
+        pinned_racks: "{{ pinned_hostnames | map('split', '-') | map('first') | list }}"
+      changed_when: false
+
+    - name: Show hosts selected by model preference
+      when:
+        - host_selection_mode | default('') in ['preferred_models', 'preferred_hosts', 'any_available']
+        - hosts_to_schedule is defined
+        - available_by_model is defined
+        - candidate_pool_mode | default('') == 'preferred_models'
+      ansible.builtin.debug:
+        msg: "{{ selection_lines }}"
+      vars:
+        selection_lines: >-
+          {%- set lines = [
+            'Selected ' ~ (hosts_to_schedule | length) ~ ' host(s) on rack ' ~ (selected_rack | default('unknown')) ~ ':'
+          ] -%}
+          {%- for model_result in available_by_model.results | default([]) -%}
+            {%- set hosts = model_result.json | default([]) -%}
+            {%- if hosts is sequence and hosts is not string -%}
+              {%- for h in hosts_to_schedule -%}
+                {%- if h.name in hosts -%}
+                  {%- set _ = lines.append(h.name ~ ' (model: ' ~ (model_result.item | upper) ~ ')') -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ lines }}
+      changed_when: false
+
+    - name: Show same-rack host selection summary
+      when:
+        - hosts_to_schedule is defined
+        - selected_rack is defined
+        - (selected_rack | trim | length) > 0
+      ansible.builtin.debug:
+        msg:
+          - "Rack: {{ selected_rack }} (bench + client on same top-of-rack switch)"
+          - "Selection mode: {{ host_selection_mode | default('unknown') }}"
+          - "Hosts: {{ hosts_to_schedule | map(attribute='name') | list | join(', ') }}"
+      changed_when: false
+
+    - name: Ensure enough same-rack hosts are available
+      ansible.builtin.assert:
+        that:
+          - hosts_to_schedule is defined
+          - hosts_to_schedule | length >= (num_hosts | int)
+          - (selected_rack | default('') | trim | length) > 0
+        fail_msg: >-
+          Need {{ num_hosts }} host(s) on the same rack; only {{ hosts_to_schedule | length | default(0) }} selected
+          (rack: {{ selected_rack | default('none') }}).
+          {% if preferred_rack is defined and (preferred_rack | trim | length) > 0 %}
+          preferred_rack={{ preferred_rack | trim }}.
+          {% endif %}
+          {% if preferred_models is defined and preferred_models is not string %}
+          Preferred models tried: {{ preferred_models | map('upper') | list | join(', ') }}.
+          {% endif %}
+          Do not mix racks (e.g. f24 + f27). Set preferred_rack (e.g. f24) in quads_cfg.yaml,
+          or preferred_bench_host / preferred_client_host (e.g. f24-h07 + f24-h08),
+          or pass -e schedule_servers=host1,host2 from one rack.
+      changed_when: false
+
+    - name: Create self-schedule assignment
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments/self"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        body_format: json
+        body:
+          description: "{{ workload_name }}"
+          owner: "{{ quads_username }}"
+          qinq: "{{ qinq }}"
+          wipe: "{{ wipe }}"
+        validate_certs: false
+        status_code: [201, 403]
+      register: assignment_creation_result
+
+    - name: Fetch existing assignment when one already exists
+      when: assignment_creation_result.status == 403
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments?owner={{ quads_username }}&is_self_schedule=true&active=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: 200
+      register: existing_assignment_details
+
+    - name: Fail when assignment exists but cannot be loaded
+      when: assignment_creation_result.status == 403
+      ansible.builtin.assert:
+        that:
+          - existing_assignment_details.json | length > 0
+        fail_msg: >-
+          Assignment creation returned 403 but no active self-scheduled assignment was found.
+          Terminate the existing assignment (ansible-playbook playbooks/scalelab-cleanup.yaml) or contact QUADS admin.
+      changed_when: false
+
+    - name: Update description on existing assignment
+      when: assignment_creation_result.status == 403
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments/{{ existing_assignment_details.json[0].id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        body_format: json
+        body:
+          description: "{{ workload_name }}"
+        validate_certs: false
+        status_code: 200
+
+    - name: Set assignment facts
+      ansible.builtin.set_fact:
+        assignment_data: "{{ assignment_creation_result.json if assignment_creation_result.status == 201 else existing_assignment_details.json[0] }}"
+      changed_when: false
+
+    - name: Extract assignment id and cloud
+      ansible.builtin.set_fact:
+        assignment_id: "{{ assignment_data.id }}"
+        assignment_cloud: "{{ assignment_data.cloud.name | default('unknown') }}"
+      changed_when: false
+
+    - name: Schedule each host on the assignment
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/schedules"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        body_format: json
+        body:
+          cloud: "{{ assignment_cloud }}"
+          hostname: "{{ item.name }}"
+        validate_certs: false
+        status_code: [200, 201]
+      loop: "{{ hosts_to_schedule }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: schedule_results
+
+    - name: Set ordered hostnames for bench and client
+      ansible.builtin.set_fact:
+        scheduled_hostnames: "{{ hosts_to_schedule | map(attribute='name') | list }}"
+        bench_hostname: "{{ (hosts_to_schedule | map(attribute='name') | list)[0] }}"
+        client_hostname: "{{ (hosts_to_schedule | map(attribute='name') | list)[1] }}"
+      changed_when: false
+
+    - name: Write assignment record for cleanup
+      ansible.builtin.copy:
+        dest: "{{ project_root }}/scalelab_assignment.yml"
+        mode: "0644"
+        content: "{{ scalelab_assignment_record | to_nice_yaml }}"
+      vars:
+        scalelab_assignment_record:
+          assignment_id: "{{ assignment_id }}"
+          assignment_description: "{{ workload_name }}"
+          cloud_name: "{{ assignment_cloud }}"
+          quads_api_server: "{{ quads_api_server }}"
+          host_selection_mode: "{{ host_selection_mode | default('unknown') }}"
+          preferred_models: "{{ preferred_models | default('all') }}"
+          selected_rack: "{{ selected_rack | default('') }}"
+          scheduled_hosts: "{{ scheduled_hostnames }}"
+          bench_host: "{{ bench_hostname }}"
+          client_host: "{{ client_hostname }}"
+
+    - name: Write inventory.local.ini (bench = 1st host, client = 2nd)
+      no_log: true
+      ansible.builtin.template:
+        src: ../templates/inventory.local.ini.j2
+        dest: "{{ inventory_local_path }}"
+        mode: "0600"
+      vars:
+        scalelab_ssh_pass: "{{ _scalelab_ssh_pass }}"
+
+    - name: Remove stale SSH host keys for scheduled ScaleLab hosts
+      ansible.builtin.include_tasks: tasks/scalelab-ssh-known-hosts.yaml
+      vars:
+        scalelab_ssh_hostnames: "{{ scheduled_hostnames }}"
+
+    - name: Show scheduling summary
+      ansible.builtin.debug:
+        msg:
+          - "Scheduled {{ hosts_to_schedule | length }} host(s) on assignment {{ assignment_id }}."
+          - "Rack: {{ selected_rack | default('unknown') }} (same top-of-rack; do not mix e.g. f24 + f27)"
+          - "Selection: {{ host_selection_mode | default('unknown') }}{% if preferred_models is defined %} (models: {{ preferred_models }}){% endif %}"
+          - "bench-vm (1st): {{ bench_hostname }}"
+          - "client-vm (2nd): {{ client_hostname }}"
+          - "Wrote {{ inventory_local_path }} and scalelab_assignment.yml"
+          - "Poll validation: GET {{ base_api_url }}/assignments/{{ assignment_id }}"
+          - "Teardown when finished: ansible-playbook playbooks/scalelab-cleanup.yaml"

@@ -1,0 +1,52 @@
+---
+# Build _metrics_pmdumptext_names from defaults + disk.dev + network.interface lists.
+# Caller may preset _metrics_disk_dev_pairs / _metrics_network_iface_pairs or leave empty to build here.
+- name: Build disk.dev metric names for configured block devices
+  when:
+    - pcp_capture_enable | default(true) | bool
+    - pcp_pmdumptext_metrics is not defined
+    - (_metrics_disk_dev_pairs | default([]) | length) == 0
+  ansible.builtin.set_fact:
+    _metrics_disk_dev_pairs: "{{ _metrics_disk_dev_pairs | default([]) + ['disk.dev.read[' ~ item ~ ']', 'disk.dev.write[' ~ item ~ ']'] }}"
+  loop: "{{ _pcp_disk_dev_list }}"
+
+- name: Resolve effective network interfaces for PCP metrics
+  when:
+    - pcp_capture_enable | default(true) | bool
+    - pcp_pmdumptext_metrics is not defined
+  ansible.builtin.set_fact:
+    _pcp_network_iface_list: >-
+      {{
+        (pcp_network_interface_instances | default([]))
+        if (pcp_network_interface_instances | default([]) | length) > 0
+        else (
+          [ansible_default_ipv4.interface]
+          if ansible_default_ipv4 is defined and ansible_default_ipv4.interface is defined
+          else []
+        )
+      }}
+  changed_when: false
+
+- name: Build network.interface byte metrics
+  when:
+    - pcp_capture_enable | default(true) | bool
+    - pcp_pmdumptext_metrics is not defined
+    - (_metrics_network_iface_pairs | default([]) | length) == 0
+  ansible.builtin.set_fact:
+    _metrics_network_iface_pairs: "{{ _metrics_network_iface_pairs | default([]) + ['network.interface.in.bytes[' ~ item ~ ']', 'network.interface.out.bytes[' ~ item ~ ']'] }}"
+  loop: "{{ _pcp_network_iface_list | default([]) }}"
+
+- name: Resolve pmdumptext metric list for this run
+  when: pcp_capture_enable | default(true) | bool
+  ansible.builtin.set_fact:
+    _metrics_pmdumptext_names: >-
+      {{
+        pcp_pmdumptext_metrics
+        if pcp_pmdumptext_metrics is defined
+        else (
+          pcp_pmdumptext_metrics_default
+          + (_metrics_disk_dev_pairs | default([]))
+          + (_metrics_network_iface_pairs | default([]))
+        )
+      }}
+  changed_when: false

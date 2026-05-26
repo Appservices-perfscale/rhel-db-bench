@@ -1,0 +1,35 @@
+---
+# Load benchmark tables into PostgreSQL shared_buffers after schema build.
+# Must run on the bench host. Requires postgresql-contrib from playbooks/setup.yaml.
+- name: Create pg_prewarm extension in benchmark database
+  community.postgresql.postgresql_ext:
+    name: pg_prewarm
+    db: "{{ pgsql_benchmark_db }}"
+    login_host: "{{ _pgsql_connect_host }}"
+    login_user: "{{ pgsql_superuser }}"
+    login_password: "{{ pgsql_superuser_password }}"
+    port: "{{ pgsql_port }}"
+  no_log: true
+
+- name: Prewarm benchmark relations into shared_buffers
+  community.postgresql.postgresql_query:
+    login_host: "{{ _pgsql_connect_host }}"
+    login_user: "{{ pgsql_superuser }}"
+    login_password: "{{ pgsql_superuser_password }}"
+    port: "{{ pgsql_port }}"
+    login_db: "{{ pgsql_benchmark_db }}"
+    query: |
+      SELECT sum(pg_prewarm(c.oid, 'buffer'))
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'm')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        AND c.relpersistence = 'p';
+    autocommit: true
+  register: pgsql_prewarm_result
+  no_log: true
+
+- name: Show pg_prewarm block count
+  ansible.builtin.debug:
+    msg: "pg_prewarm loaded {{ pgsql_prewarm_result.query_result[0].sum | default('unknown') }} buffer pages into shared_buffers"
+  changed_when: false

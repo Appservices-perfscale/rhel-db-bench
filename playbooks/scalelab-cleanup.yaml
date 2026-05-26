@@ -1,0 +1,170 @@
+---
+# Terminate ScaleLab / QUADS self-scheduled assignment after DB-CPT.
+#
+# From project root:
+#   ansible-playbook playbooks/scalelab-cleanup.yaml
+#
+# Uses assignment_id from scalelab_assignment.yml (written by auto-schedule.yaml).
+# Optional overrides:
+#   -e assignment_id=<id>     terminate a specific assignment
+#   -e terminate_all_active=true   terminate every active self-schedule assignment (no record file)
+
+- name: ScaleLab QUADS cleanup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - ../quads_cfg.yaml
+
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+    assignment_record_path: "{{ project_root }}/scalelab_assignment.yml"
+    terminate_all_active: false
+
+  tasks:
+    - name: Set API variables
+      ansible.builtin.set_fact:
+        quads_user_email: "{{ quads_username }}@{{ quads_user_domain }}"
+        base_api_url: "https://{{ quads_api_server }}/api/v3"
+      changed_when: false
+
+    - name: Check for assignment record from scheduling playbook
+      ansible.builtin.stat:
+        path: "{{ assignment_record_path }}"
+      register: assignment_record_stat
+
+    - name: Load assignment record
+      when:
+        - assignment_record_stat.stat.exists
+        - assignment_id is not defined
+        - not terminate_all_active | bool
+      ansible.builtin.include_vars:
+        file: "{{ assignment_record_path }}"
+
+    - name: Remove stale SSH host keys for released ScaleLab hosts
+      ansible.builtin.include_tasks: tasks/scalelab-ssh-known-hosts.yaml
+      vars:
+        scalelab_ssh_hostnames: >-
+          {{
+            scheduled_hosts | default([])
+            if (scheduled_hosts | default([]) | length > 0)
+            else (
+              [bench_host | default(''), client_host | default('')]
+              | map('trim')
+              | reject('equalto', '')
+              | list
+            )
+          }}
+
+    - name: Log in to QUADS API
+      no_log: true
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/login/"
+        method: POST
+        url_username: "{{ quads_user_email }}"
+        url_password: "{{ quads_password }}"
+        validate_certs: false
+        status_code: 200
+      register: login_result
+
+    - name: Fail when login did not succeed
+      ansible.builtin.fail:
+        msg: >-
+          QUADS login failed for {{ quads_username }}@{{ quads_user_domain }}.
+          Check credentials in quads_cfg.yaml.
+      when: login_result.status | default(0) != 200
+
+    - name: Set authentication token
+      ansible.builtin.set_fact:
+        quads_token: "{{ login_result.json.auth_token }}"
+      changed_when: false
+
+    - name: Build list of assignment ids to terminate (from record or extra var)
+      when:
+        - assignment_id is defined
+        - not terminate_all_active | bool
+      ansible.builtin.set_fact:
+        assignment_ids_to_terminate: ["{{ assignment_id }}"]
+      changed_when: false
+
+    - name: List active self-scheduled assignments
+      when:
+        - assignment_ids_to_terminate is not defined
+        - terminate_all_active | bool or assignment_id is not defined
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments?owner={{ quads_username }}&is_self_schedule=true&active=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: 200
+      register: active_assignments
+
+    - name: Set assignment ids from active list
+      when:
+        - assignment_ids_to_terminate is not defined
+        - terminate_all_active | bool or assignment_id is not defined
+      ansible.builtin.set_fact:
+        assignment_ids_to_terminate: "{{ active_assignments.json | map(attribute='id') | map('string') | list }}"
+      changed_when: false
+
+    - name: Report when nothing will be terminated
+      when: assignment_ids_to_terminate | default([]) | length == 0
+      ansible.builtin.debug:
+        msg: No assignment to terminate (no scalelab_assignment.yml, no -e assignment_id, and no active assignments).
+      changed_when: false
+
+    - name: Show assignment status before terminate
+      when: assignment_ids_to_terminate | default([]) | length > 0
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments/{{ item }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: 200
+      loop: "{{ assignment_ids_to_terminate }}"
+      loop_control:
+        label: "{{ item }}"
+      register: assignment_status_before
+
+    - name: Display validation state before terminate
+      when: assignment_ids_to_terminate | default([]) | length > 0
+      ansible.builtin.debug:
+        msg: "Assignment {{ item.item }} validated={{ item.json.validated | default('unknown') }}"
+      loop: "{{ assignment_status_before.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: false
+
+    - name: Terminate assignment(s)
+      when: assignment_ids_to_terminate | default([]) | length > 0
+      ansible.builtin.uri:
+        url: "{{ base_api_url }}/assignments/terminate/{{ item }}"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ quads_token }}"
+        validate_certs: false
+        status_code: [200, 201, 204]
+      loop: "{{ assignment_ids_to_terminate }}"
+      loop_control:
+        label: "{{ item }}"
+      register: terminate_results
+
+    - name: Show terminate results
+      when: assignment_ids_to_terminate | default([]) | length > 0
+      ansible.builtin.debug:
+        msg: "Terminated assignment {{ item.item }} (HTTP {{ item.status }})"
+      loop: "{{ terminate_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: false
+
+    - name: Remove assignment record file
+      when:
+        - assignment_ids_to_terminate | default([]) | length > 0
+        - assignment_record_stat.stat.exists
+      ansible.builtin.file:
+        path: "{{ assignment_record_path }}"
+        state: absent

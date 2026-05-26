@@ -12,8 +12,8 @@
 #   ansible-playbook playbooks/run-matrix.yaml -e 'matrix_results_subdir=results/matrix-20260411'
 #
 # Each iteration sets perf_run_stamp (controller clock) so artifacts get unique names under perf_results_path:
-#   <stamp>-benchmark-report.json, <stamp>-host-metrics-samples.log (bench),
-#   <stamp>-client-host-metrics-samples.log (load generator), etc.
+#   <stamp>-benchmark-report.json, <stamp>-bench-metrics-samples.log (bench),
+#   <stamp>-client-metrics-samples.log (load generator), etc.
 
 - name: Run HammerDB / site.yml matrix over virtual users and repeat count
   hosts: localhost
@@ -65,8 +65,11 @@
 
           for f in \
             "{{ results_dir }}/${RUN_TS}-benchmark-report.json" \
-            "{{ results_dir }}/${RUN_TS}-host-metrics-samples.log" \
-            "{{ results_dir }}/${RUN_TS}-client-host-metrics-samples.log"; do
+            "{{ results_dir }}/${RUN_TS}-results.json" \
+            "{{ results_dir }}/${RUN_TS}-monitoring.json" \
+            "{{ results_dir }}/${RUN_TS}-master.json" \
+            "{{ results_dir }}/${RUN_TS}-bench-metrics-samples.log" \
+            "{{ results_dir }}/${RUN_TS}-client-metrics-samples.log"; do
             [ -f "$f" ] && cp -f "$f" "${ARCHIVE_SUBDIR}/" || true
           done
         } 2>&1 | tee "{{ results_dir }}/${LOGFILE}"

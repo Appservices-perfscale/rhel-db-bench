@@ -1,0 +1,188 @@
+---
+# Apply benchmark PostgreSQL tuning (shared_buffers in RAM, WAL sized to avoid checkpoints).
+# Requires gather_facts on bench. Caller must set _pgsql_connect_host.
+- name: Check whether manual memory overrides are provided
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  ansible.builtin.set_fact:
+    _pgsql_manual_shared_buffers: "{{ pgsql_tune_shared_buffers | default('') | string | trim }}"
+    _pgsql_manual_effective_cache: "{{ pgsql_tune_effective_cache_size | default('') | string | trim }}"
+  changed_when: false
+
+- name: Compute PostgreSQL memory tuning from bench host RAM
+  when:
+    - pgsql_benchmark_low_variance_tune | default(false) | bool
+    - _pgsql_manual_shared_buffers | length == 0 or _pgsql_manual_effective_cache | length == 0
+  ansible.builtin.set_fact:
+    _pgsql_bench_ram_mb: "{{ ansible_memtotal_mb | default(0) | int }}"
+    _pgsql_os_reserve_mb: "{{ pgsql_tune_os_reserve_mb | default(8192) | int }}"
+  changed_when: false
+
+- name: Compute usable RAM after OS reserve
+  when:
+    - pgsql_benchmark_low_variance_tune | default(false) | bool
+    - _pgsql_manual_shared_buffers | length == 0 or _pgsql_manual_effective_cache | length == 0
+  ansible.builtin.set_fact:
+    _pgsql_usable_ram_mb: "{{ [(_pgsql_bench_ram_mb | int) - (_pgsql_os_reserve_mb | int), 1024] | max }}"
+  changed_when: false
+
+- name: Derive shared_buffers from RAM
+  when:
+    - pgsql_benchmark_low_variance_tune | default(false) | bool
+    - _pgsql_manual_shared_buffers | length == 0
+  ansible.builtin.set_fact:
+    _pgsql_shared_buffers_mb: >-
+      {{
+        [
+          (
+            (_pgsql_usable_ram_mb | int)
+            * (pgsql_tune_shared_buffers_ram_pct | default(75) | float)
+            / 100
+          ) | int,
+          pgsql_tune_shared_buffers_mb_min | default(1024) | int
+        ] | max
+      }}
+  changed_when: false
+
+- name: Derive effective_cache_size from RAM
+  when:
+    - pgsql_benchmark_low_variance_tune | default(false) | bool
+    - _pgsql_manual_effective_cache | length == 0
+  ansible.builtin.set_fact:
+    _pgsql_effective_cache_mb: >-
+      {{
+        (
+          (_pgsql_usable_ram_mb | int)
+          * (pgsql_tune_effective_cache_ram_pct | default(85) | float)
+          / 100
+        ) | int
+      }}
+  changed_when: false
+
+- name: Resolve PostgreSQL tuning values (inventory override or RAM-derived)
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  ansible.builtin.set_fact:
+    pgsql_tune_shared_buffers_resolved: >-
+      {{
+        _pgsql_manual_shared_buffers
+        if (_pgsql_manual_shared_buffers | length > 0)
+        else (
+          ((_pgsql_shared_buffers_mb | int >= 1024)
+          | ternary(
+              ((_pgsql_shared_buffers_mb | int / 1024) | int) ~ 'GB',
+              (_pgsql_shared_buffers_mb | int) ~ 'MB'
+            ))
+        )
+      }}
+    pgsql_tune_effective_cache_size_resolved: >-
+      {{
+        _pgsql_manual_effective_cache
+        if (_pgsql_manual_effective_cache | length > 0)
+        else (
+          ((_pgsql_effective_cache_mb | int >= 1024)
+          | ternary(
+              ((_pgsql_effective_cache_mb | int / 1024) | int) ~ 'GB',
+              (_pgsql_effective_cache_mb | int) ~ 'MB'
+            ))
+        )
+      }}
+    pgsql_tune_max_wal_size_resolved: "{{ pgsql_tune_max_wal_size | string | trim }}"
+    pgsql_tune_checkpoint_timeout_resolved: "{{ pgsql_tune_checkpoint_timeout | string | trim }}"
+  changed_when: false
+
+- name: Record resolved tuning on bench for benchmark report
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  ansible.builtin.set_fact:
+    benchmark_pgsql_tuning_applied:
+      shared_buffers: "{{ pgsql_tune_shared_buffers_resolved }}"
+      effective_cache_size: "{{ pgsql_tune_effective_cache_size_resolved }}"
+      max_wal_size: "{{ pgsql_tune_max_wal_size_resolved }}"
+      checkpoint_timeout: "{{ pgsql_tune_checkpoint_timeout_resolved }}"
+      fsync: "{{ pgsql_tune_fsync }}"
+      synchronous_commit: "{{ pgsql_tune_synchronous_commit }}"
+  changed_when: false
+
+- name: Show resolved PostgreSQL memory and WAL tuning
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  ansible.builtin.debug:
+    msg: >-
+      shared_buffers={{ pgsql_tune_shared_buffers_resolved }}
+      effective_cache_size={{ pgsql_tune_effective_cache_size_resolved }}
+      max_wal_size={{ pgsql_tune_max_wal_size_resolved }}
+      checkpoint_timeout={{ pgsql_tune_checkpoint_timeout_resolved }}
+      ({{ 'manual override' if (_pgsql_manual_shared_buffers | length > 0) else 'auto-sized from ' ~ (_pgsql_bench_ram_mb | default('?')) ~ ' MB RAM' }})
+  changed_when: false
+
+- name: Build PostgreSQL low-variance tuning list from inventory
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  ansible.builtin.set_fact:
+    pgsql_low_variance_tuning:
+      # Main buffer pool — sized from RAM so hot TPC-C pages stay in PostgreSQL memory (with pg_prewarm).
+      - { param: shared_buffers, value: "{{ pgsql_tune_shared_buffers_resolved }}" }
+      # Planner hint for OS + PG cache size on this host (does not allocate memory).
+      - { param: effective_cache_size, value: "{{ pgsql_tune_effective_cache_size_resolved }}" }
+      # Per-sort/hash budget — avoids disk spills during queries and stabilizes timing.
+      - { param: work_mem, value: "{{ pgsql_tune_work_mem }}" }
+      # Speeds VACUUM/CREATE INDEX during HammerDB schema build, not the timed run.
+      - { param: maintenance_work_mem, value: "{{ pgsql_tune_maintenance_work_mem }}" }
+      # Reduces background-writer flush bursts that add I/O noise during the benchmark.
+      - { param: bgwriter_lru_maxpages, value: "{{ pgsql_tune_bgwriter_lru_maxpages | string }}" }
+      # Disables bgwriter batch flush-after-N-blocks behavior for steadier write patterns.
+      - { param: bgwriter_flush_after, value: "{{ pgsql_tune_bgwriter_flush_after | string }}" }
+      # Unsafe benchmark profile — no forced data fsyncs; higher throughput, less sync jitter.
+      - { param: fsync, value: "{{ pgsql_tune_fsync }}" }
+      # Do not wait for WAL on disk at commit — lower latency and less I/O variance (pairs with fsync=off).
+      - { param: synchronous_commit, value: "{{ pgsql_tune_synchronous_commit }}" }
+      # Max interval (24h) so a short timed run is unlikely to hit a time-based checkpoint.
+      - { param: checkpoint_timeout, value: "{{ pgsql_tune_checkpoint_timeout_resolved }}" }
+      # Spread checkpoint I/O over the interval if one still occurs (minor for short runs).
+      - { param: checkpoint_completion_target, value: "{{ pgsql_tune_checkpoint_completion_target | string }}" }
+      # Large WAL cap so WAL volume during the run does not force a checkpoint.
+      - { param: max_wal_size, value: "{{ pgsql_tune_max_wal_size_resolved }}" }
+      # WAL recycle floor after checkpoint; secondary to max_wal_size for this workload.
+      - { param: min_wal_size, value: "{{ pgsql_tune_min_wal_size }}" }
+      # NVMe/SSD planner hint — random reads nearly as cheap as sequential.
+      - { param: random_page_cost, value: "{{ pgsql_tune_random_page_cost | string }}" }
+      # Slight planner nudge toward index/random access on fast CPU + storage.
+      - { param: cpu_tuple_cost, value: "{{ pgsql_tune_cpu_tuple_cost | string }}" }
+      # Log statements slower than N ms for debugging stragglers without full statement logging.
+      - { param: log_min_duration_statement, value: "{{ pgsql_tune_log_min_duration_statement | string }}" }
+      # No autovacuum during timed run — avoids background I/O (pre-run VACUUM handles cleanup).
+      - { param: autovacuum, value: "{{ pgsql_tune_autovacuum }}" }
+      # Inactive while autovacuum=off; kept for profile parity if autovacuum is re-enabled.
+      - { param: autovacuum_max_workers, value: "{{ pgsql_tune_autovacuum_max_workers | string }}" }
+      # Inactive while autovacuum=off; kept for profile parity if autovacuum is re-enabled.
+      - { param: autovacuum_vacuum_cost_limit, value: "{{ pgsql_tune_autovacuum_vacuum_cost_limit | string }}" }
+      # Fixed locale for consistent log/message output across hosts and RHEL versions.
+      - { param: lc_messages, value: "{{ pgsql_tune_lc_messages }}" }
+      # Log checkpoints so we can verify none occurred during the timed HammerDB window.
+      - { param: log_checkpoints, value: "{{ pgsql_tune_log_checkpoints }}" }
+  changed_when: false
+
+- name: Apply PostgreSQL low-variance benchmark tuning (ALTER SYSTEM)
+  community.postgresql.postgresql_alter_system:
+    param: "{{ item.param }}"
+    value: "{{ item.value }}"
+    login_host: "{{ _pgsql_connect_host }}"
+    login_user: "{{ pgsql_superuser }}"
+    login_password: "{{ pgsql_superuser_password }}"
+    port: "{{ pgsql_port }}"
+    login_db: postgres
+  loop: "{{ pgsql_low_variance_tuning }}"
+  loop_control:
+    label: "{{ item.param }}={{ item.value }}"
+  register: pgsql_low_variance_tune_alter
+  when: pgsql_benchmark_low_variance_tune | default(false) | bool
+  no_log: true
+
+- name: Restart PostgreSQL after memory or WAL tuning
+  ansible.builtin.systemd:
+    name: "{{ postgresql_service_name }}"
+    state: restarted
+    daemon_reload: true
+  when:
+    - pgsql_benchmark_low_variance_tune | default(false) | bool
+    - not (pgsql_low_variance_tune_alter.skipped | default(false))
+    - >-
+      pgsql_low_variance_tune_alter.get('results', [])
+      | selectattr('restart_required', 'defined')
+      | selectattr('restart_required') | list | length > 0

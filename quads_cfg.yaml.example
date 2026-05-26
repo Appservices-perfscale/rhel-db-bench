@@ -1,0 +1,25 @@
+---
+# Copy to quads_cfg.yaml and fill in your ScaleLab / QUADS credentials.
+quads_api_server: "quads.example.com"
+
+quads_username: "joe"
+quads_user_domain: "redhat.com"
+quads_password: "your-password"
+
+# Root SSH password on provisioned ScaleLab hosts (written to inventory.local.ini).
+scalelab_ssh_pass: "your-scalelab-root-password"
+
+# Same hardware class each run (not necessarily the same hostnames).
+# List: try models in order until num_hosts are found. Use "all" for any model.
+preferred_models:
+  - "r650"
+# preferred_models: "all"
+
+# Bench + client must share a rack prefix (same top-of-rack switch), e.g. f24-h07 + f24-h08.
+# Do not mix racks (f24 + f27). Rack is parsed from the hostname before "-h" (f24-h07 -> f24).
+# preferred_rack: "f24"
+# preferred_bench_host: "f24-h07-000-r630.rdu2.scalelab.redhat.com"
+# preferred_client_host: "f24-h08-000-r630.rdu2.scalelab.redhat.com"
+
+# Optional: pin exact hostnames (overrides preferred_models). Bench first, client second.
+# schedule_servers: "f24-h07-000-r630.rdu2.scalelab.redhat.com,f24-h08-000-r630.rdu2.scalelab.redhat.com"

@@ -1,0 +1,150 @@
+---
+# Reset benchmark state between HammerDB runs so the next test.yaml starts clean.
+# Does NOT remove packages, undo OS setup, or touch provisioning — only test data and caches.
+#
+#   ansible-playbook playbooks/cleanup.yaml
+#
+- name: Clean benchmark state on database host (bench)
+  hosts: bench
+  gather_facts: false
+  vars:
+    _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
+    _bench_metrics_pmdumptext_pidfile: "{{ hammerdb_remote_workdir }}/.bench-metrics-pmdumptext.pid"
+  tasks:
+    - name: Stop any lingering PCP bench metrics sampler
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "{{ _bench_metrics_pmdumptext_pidfile }}" ]; then
+          kill "$(cat "{{ _bench_metrics_pmdumptext_pidfile }}")" 2>/dev/null || true
+          rm -f "{{ _bench_metrics_pmdumptext_pidfile }}"
+        fi
+      changed_when: false
+
+    - name: Check if PostgreSQL is running
+      ansible.builtin.systemd:
+        name: "{{ postgresql_service_name }}"
+      register: _pgsql_service_status
+
+    - name: Terminate active connections to benchmark database
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        login_db: postgres
+        query: >-
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE datname = '{{ pgsql_benchmark_db }}'
+            AND pid <> pg_backend_pid()
+        autocommit: true
+      when: _pgsql_service_status.status.ActiveState == 'active'
+      failed_when: false
+
+    - name: Drop benchmark database
+      community.postgresql.postgresql_db:
+        name: "{{ pgsql_benchmark_db }}"
+        state: absent
+        maintenance_db: postgres
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        force: true
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Recreate empty benchmark database for next run
+      community.postgresql.postgresql_db:
+        name: "{{ pgsql_benchmark_db }}"
+        owner: "{{ pgsql_benchmark_user }}"
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Grant privileges on recreated benchmark database
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        login_db: postgres
+        query: GRANT ALL PRIVILEGES ON DATABASE "{{ pgsql_benchmark_db }}" TO "{{ pgsql_benchmark_user }}"
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Grant CREATE on public schema for benchmark user (PostgreSQL 15+)
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        login_db: "{{ pgsql_benchmark_db }}"
+        query: GRANT CREATE ON SCHEMA public TO "{{ pgsql_benchmark_user }}"
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Reset PostgreSQL cumulative statistics
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        login_db: postgres
+        query: SELECT pg_stat_reset()
+        autocommit: true
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Checkpoint before restart to flush WAL
+      community.postgresql.postgresql_query:
+        login_host: "{{ _pgsql_connect_host }}"
+        login_user: "{{ pgsql_superuser }}"
+        login_password: "{{ pgsql_superuser_password }}"
+        port: "{{ pgsql_port }}"
+        login_db: postgres
+        query: CHECKPOINT
+        autocommit: true
+      when: _pgsql_service_status.status.ActiveState == 'active'
+
+    - name: Restart PostgreSQL to release shared_buffers and internal caches
+      ansible.builtin.systemd:
+        name: "{{ postgresql_service_name }}"
+        state: restarted
+
+    - name: Wait for PostgreSQL to accept connections after restart
+      ansible.builtin.wait_for:
+        host: "{{ _pgsql_connect_host }}"
+        port: "{{ pgsql_port | int }}"
+        state: started
+        delay: 2
+        timeout: 60
+
+    - name: Flush OS page cache and dentries on bench
+      ansible.builtin.shell: sync; echo 3 > /proc/sys/vm/drop_caches
+      changed_when: true
+
+    - name: Remove old PCP metric sample logs from work directory
+      ansible.builtin.shell: rm -f {{ hammerdb_remote_workdir }}/*-metrics-samples.log
+      changed_when: true
+
+- name: Clean benchmark state on load generator (client)
+  hosts: client
+  gather_facts: false
+  vars:
+    _client_metrics_pmdumptext_pidfile: "{{ hammerdb_remote_workdir }}/.client-metrics-pmdumptext.pid"
+  tasks:
+    - name: Stop any lingering PCP client metrics sampler
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "{{ _client_metrics_pmdumptext_pidfile }}" ]; then
+          kill "$(cat "{{ _client_metrics_pmdumptext_pidfile }}")" 2>/dev/null || true
+          rm -f "{{ _client_metrics_pmdumptext_pidfile }}"
+        fi
+      changed_when: false
+
+    - name: Flush OS page cache on client
+      ansible.builtin.shell: sync; echo 3 > /proc/sys/vm/drop_caches
+      changed_when: true
+
+    - name: Remove old PCP metric sample logs from client work directory
+      ansible.builtin.shell: rm -f {{ hammerdb_remote_workdir }}/*-metrics-samples.log
+      changed_when: true

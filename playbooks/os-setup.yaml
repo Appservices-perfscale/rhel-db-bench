@@ -1,0 +1,212 @@
+---
+# Pin remote hosts to a specific RHEL build, distro-sync, reboot, and write facts.json.
+#
+# Targets [remote] (bench + client). Use --limit to choose which hosts to change:
+#   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini --limit bench
+#   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini --limit client
+#   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini
+#
+# Per-group RHEL build URLs and expected release IDs live in inventory.ini
+# ([bench:vars] and [client:vars]). Shared knobs are under [remote:vars].
+#
+# Run before playbooks/setup.yaml on fresh or reprovisioned hosts.
+
+- name: Sync OS to requested RHEL build (remote)
+  hosts: remote
+  gather_facts: true
+  serial: 1
+  vars:
+    _os_prep_facts_dir: >-
+      {{
+        (perf_results_path | default('') | string | trim | length > 0)
+        | ternary(
+            perf_results_path | string | trim ~ '/os-prep',
+            playbook_dir ~ '/../results/os-prep'
+          )
+      }}
+  tasks:
+    - name: Skip host when OS prep is disabled
+      ansible.builtin.meta: end_host
+      when: not (os_prep_enable | default(true) | bool)
+
+    - name: Require os_prep_rhel_release_root for this host
+      ansible.builtin.assert:
+        that:
+          - os_prep_rhel_release_root is defined
+          - os_prep_rhel_release_root | string | trim | length > 0
+        fail_msg: >-
+          Set os_prep_rhel_release_root (and os_prep_rhel_release_id) in inventory for
+          {{ inventory_hostname }} — see [bench:vars] / [client:vars] in inventory.ini.
+      changed_when: false
+
+    - name: Require os_prep_rhel_release_id for this host
+      ansible.builtin.assert:
+        that:
+          - os_prep_rhel_release_id is defined
+          - os_prep_rhel_release_id | string | trim | length > 0
+        fail_msg: >-
+          Set os_prep_rhel_release_id for {{ inventory_hostname }} (e.g. 9.7).
+      changed_when: false
+
+    - name: Show OS prep target for this host
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: syncing to {{ os_prep_rhel_release_root }}
+          (expect release id {{ os_prep_rhel_release_id }})
+
+    - name: List existing yum repository files
+      ansible.builtin.find:
+        paths: /etc/yum.repos.d
+        patterns: "*.repo"
+        file_type: file
+      register: os_prep_old_repos
+
+    - name: Remove existing yum repository files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ os_prep_old_repos.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Install BaseOS and AppStream repository definitions
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/os-prep-rhel.repo.j2"
+        dest: /etc/yum.repos.d/os-prep-rhel.repo
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Pin DNF releasever to inventory RHEL minor
+      ansible.builtin.copy:
+        dest: /etc/dnf/vars/releasever
+        content: "{{ os_prep_rhel_release_id }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Clean DNF metadata
+      ansible.builtin.command: dnf clean all
+      changed_when: true
+
+    - name: Stop services before OS version pin
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ os_prep_stop_services | default(['postgresql-' ~ (postgresql_major | default(17) | string), 'pmcd']) }}"
+      failed_when: false
+
+    - name: List installed RPM names
+      ansible.builtin.command: rpm -qa --qf '%{NAME}\n'
+      register: os_prep_installed_rpms
+      changed_when: false
+      when: os_prep_remove_provisioned_packages | default(true) | bool
+
+    - name: Select PostgreSQL, PGDG, and PCP packages to remove before distro-sync
+      ansible.builtin.set_fact:
+        os_prep_packages_to_remove: >-
+          {{
+            os_prep_installed_rpms.stdout_lines
+            | select('match', '^(postgresql|pgdg-redhat-repo|pcp)')
+            | list
+          }}
+      when: os_prep_remove_provisioned_packages | default(true) | bool
+
+    - name: Remove provisioned packages not in the target RHEL compose
+      ansible.builtin.dnf:
+        name: "{{ os_prep_packages_to_remove }}"
+        state: absent
+        disable_plugin: subscription-manager
+      when:
+        - os_prep_remove_provisioned_packages | default(true) | bool
+        - os_prep_packages_to_remove | default([]) | length > 0
+
+    - name: Distro-sync to the configured RHEL tree
+      ansible.builtin.command: >-
+        dnf -y --disableplugin=subscription-manager distro-sync --allowerasing
+      register: os_prep_distro_sync
+      changed_when: os_prep_distro_sync.rc == 0
+
+    - name: Read installed redhat-release before reboot
+      ansible.builtin.command: rpm -q redhat-release
+      register: os_prep_redhat_release_pre
+      changed_when: false
+
+    - name: Confirm redhat-release matches requested id before reboot
+      ansible.builtin.assert:
+        that:
+          - os_prep_rhel_release_id | string in os_prep_redhat_release_pre.stdout
+        fail_msg: >-
+          Expected '{{ os_prep_rhel_release_id }}' in redhat-release output;
+          got: {{ os_prep_redhat_release_pre.stdout }}
+      changed_when: false
+
+    - name: Reboot to run the synced kernel
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ os_prep_reboot_timeout | default(1800) | int }}"
+        test_command: uptime
+
+- name: Collect facts after reboot and write facts.json (remote)
+  hosts: remote
+  gather_facts: true
+  serial: 1
+  vars:
+    _os_prep_facts_dir: >-
+      {{
+        (perf_results_path | default('') | string | trim | length > 0)
+        | ternary(
+            perf_results_path | string | trim ~ '/os-prep',
+            playbook_dir ~ '/../results/os-prep'
+          )
+      }}
+  tasks:
+    - name: Skip host when OS prep is disabled
+      ansible.builtin.meta: end_host
+      when: not (os_prep_enable | default(true) | bool)
+
+    - name: Read redhat-release after reboot
+      ansible.builtin.command: rpm -q redhat-release
+      register: os_prep_redhat_release_post
+      changed_when: false
+
+    - name: Confirm redhat-release after reboot
+      ansible.builtin.assert:
+        that:
+          - os_prep_rhel_release_id | string in os_prep_redhat_release_post.stdout
+        fail_msg: >-
+          After reboot, expected '{{ os_prep_rhel_release_id }}' in redhat-release;
+          got: {{ os_prep_redhat_release_post.stdout }}
+      changed_when: false
+
+    - name: Confirm Ansible sees the expected RHEL major.minor
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'RedHat'
+          - os_prep_rhel_release_id | string in ansible_distribution_version
+        fail_msg: >-
+          ansible_distribution={{ ansible_distribution | default('unknown') }}
+          {{ ansible_distribution_version | default('') }};
+          expected release id {{ os_prep_rhel_release_id }}.
+      changed_when: false
+
+    - name: Show kernel after OS prep
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: kernel {{ ansible_kernel }},
+          {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+    - name: Ensure local facts output directory exists
+      ansible.builtin.file:
+        path: "{{ _os_prep_facts_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Write Ansible facts to facts.json on controller
+      ansible.builtin.copy:
+        content: "{{ ansible_facts | to_nice_json }}\n"
+        dest: "{{ _os_prep_facts_dir }}/{{ inventory_hostname }}/facts.json"
+        mode: "0644"
+      delegate_to: localhost
+      become: false

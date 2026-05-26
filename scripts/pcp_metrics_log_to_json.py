@@ -3,8 +3,8 @@
 Merge pmdumptext-format PCP sample logs into a benchmark report JSON.
 
 Each log file is parsed independently:
-  --log          -> merged under report["host_metrics"]
-  --client-log   -> merged under report["client_host_metrics"]
+  --log          -> merged under report["bench_metrics"]
+  --client-log   -> merged under report["client_metrics"]
 
 Parsed blocks are deep-merged with existing objects so Ansible metadata
 (capture flags, metric names, intervals) is preserved alongside summary/samples.
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -26,6 +27,17 @@ BYTES_PER_GIB = 1024**3
 KB_PER_4K_IOP = 4.0
 
 
+def _percentile(sorted_vals: list[float], pct: float) -> float:
+    """Nearest-rank percentile on a pre-sorted list."""
+    if not sorted_vals:
+        return 0.0
+    k = (pct / 100.0) * (len(sorted_vals) - 1)
+    lo = int(math.floor(k))
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = k - lo
+    return round(sorted_vals[lo] + frac * (sorted_vals[hi] - sorted_vals[lo]), 2)
+
+
 @dataclass
 class MetricSummary:
     sample_count_valid_cpu: int = 0
@@ -33,19 +45,34 @@ class MetricSummary:
     sample_count_valid_mem: int = 0
     max_cpu_utilization_percent: float = 0.0
     avg_cpu_utilization_percent: float = 0.0
+    p95_cpu_utilization_percent: float = 0.0
+    max_cpu_user: float = 0.0
+    avg_cpu_user: float = 0.0
+    p95_cpu_user: float = 0.0
+    max_cpu_sys: float = 0.0
+    avg_cpu_sys: float = 0.0
+    p95_cpu_sys: float = 0.0
     max_disk_read_kbps: float = 0.0
     avg_disk_read_kbps: float = 0.0
+    p95_disk_read_kbps: float = 0.0
     max_disk_write_kbps: float = 0.0
     avg_disk_write_kbps: float = 0.0
+    p95_disk_write_kbps: float = 0.0
     max_disk_total_kbps: float = 0.0
     avg_disk_total_kbps: float = 0.0
+    p95_disk_total_kbps: float = 0.0
     max_read_iops_estimated: float = 0.0
     avg_read_iops_estimated: float = 0.0
+    p95_read_iops_estimated: float = 0.0
     max_write_iops_estimated: float = 0.0
     avg_write_iops_estimated: float = 0.0
+    p95_write_iops_estimated: float = 0.0
     max_iops_estimated: float = 0.0
     avg_iops_estimated: float = 0.0
+    p95_iops_estimated: float = 0.0
     max_mem_used_gib: float = 0.0
+    avg_mem_used_gib: float = 0.0
+    p95_mem_used_gib: float = 0.0
     min_mem_free_gib: float = 0.0
 
 
@@ -139,6 +166,23 @@ def _network_sample_key(iface: str, direction: str) -> str:
     return f"network_interface_{safe}_{direction}_kbps"
 
 
+def _parse_disk_dev_metric(name: str) -> tuple[str, str] | None:
+    """If name is disk.dev.{read,write}[devname], return (devname, 'read'|'write')."""
+    m = re.match(
+        r"disk\.dev\.(read|write)\[([^\]]+)\]",
+        name.strip(),
+    )
+    if not m:
+        return None
+    direction, dev = m.group(1), m.group(2)
+    return dev, direction
+
+
+def _disk_dev_sample_key(dev: str, direction: str) -> str:
+    safe = re.sub(r"[^\w\-]+", "_", dev.strip()).strip("_") or "dev"
+    return f"disk_dev_{safe}_{direction}_kbps"
+
+
 def _bytes_rate_to_kbps(raw: float) -> float:
     return round(raw / BYTES_PER_KB, 3)
 
@@ -172,6 +216,50 @@ def _summarize_network(
         sec = out.setdefault(iface, {})
         sec[f"max_{direction}_kbps"] = round(max(vals), 3)
         sec[f"avg_{direction}_kbps"] = avg(vals)
+
+    return out
+
+
+def _summarize_disk_devices(
+    samples: list[dict[str, Any]], metric_names: list[str] | None
+) -> dict[str, Any]:
+    """Per-device max/avg read/write KB/s and estimated IOPS."""
+    if not metric_names:
+        return {}
+    pairs: list[tuple[str, str, str]] = []
+    for m in metric_names:
+        pr = _parse_disk_dev_metric(m)
+        if pr:
+            dev, direction = pr
+            pairs.append((m, dev, direction))
+
+    if not pairs:
+        return {}
+
+    def avg(xs: Iterable[float]) -> float:
+        xs = list(xs)
+        return round(sum(xs) / len(xs), 2) if xs else 0.0
+
+    out: dict[str, Any] = {}
+    for _mname, dev, direction in pairs:
+        jkey = _disk_dev_sample_key(dev, direction)
+        vals = [float(s[jkey]) for s in samples if jkey in s]
+        if not vals:
+            continue
+        sec = out.setdefault(dev, {})
+        sec[f"max_{direction}_kbps"] = round(max(vals), 3)
+        sec[f"avg_{direction}_kbps"] = avg(vals)
+        iops_vals = [round(v / KB_PER_4K_IOP, 2) for v in vals]
+        sec[f"max_{direction}_iops_estimated"] = round(max(iops_vals), 2)
+        sec[f"avg_{direction}_iops_estimated"] = avg(iops_vals)
+
+    for dev, sec in out.items():
+        r_max = sec.get("max_read_iops_estimated", 0.0)
+        w_max = sec.get("max_write_iops_estimated", 0.0)
+        r_avg = sec.get("avg_read_iops_estimated", 0.0)
+        w_avg = sec.get("avg_write_iops_estimated", 0.0)
+        sec["max_total_iops_estimated"] = round(r_max + w_max, 2)
+        sec["avg_total_iops_estimated"] = round(r_avg + w_avg, 2)
 
     return out
 
@@ -232,19 +320,26 @@ def _row_to_sample(
 
     for mname in metric_names:
         pr = _parse_network_metric(mname)
-        if not pr:
+        if pr:
+            iface, direction = pr
+            raw = by_name.get(mname)
+            if raw is not None:
+                sample[_network_sample_key(iface, direction)] = _bytes_rate_to_kbps(raw)
             continue
-        iface, direction = pr
-        raw = by_name.get(mname)
-        if raw is None:
-            continue
-        sample[_network_sample_key(iface, direction)] = _bytes_rate_to_kbps(raw)
+        dd = _parse_disk_dev_metric(mname)
+        if dd:
+            dev, direction = dd
+            raw = by_name.get(mname)
+            if raw is not None:
+                sample[_disk_dev_sample_key(dev, direction)] = round(raw, 2)
 
     return sample
 
 
 def _summarize(samples: list[dict[str, Any]]) -> MetricSummary:
     cpu_utils: list[float] = []
+    cpu_user_vals: list[float] = []
+    cpu_sys_vals: list[float] = []
     disk_read: list[float] = []
     disk_write: list[float] = []
     disk_total: list[float] = []
@@ -261,6 +356,10 @@ def _summarize(samples: list[dict[str, Any]]) -> MetricSummary:
         if "cpu_utilization_percent" in row:
             cpu_rows += 1
             cpu_utils.append(float(row["cpu_utilization_percent"]))
+        if "cpu_user" in row:
+            cpu_user_vals.append(float(row["cpu_user"]))
+        if "cpu_sys" in row:
+            cpu_sys_vals.append(float(row["cpu_sys"]))
         if all(k in row for k in ("disk_all_read_kbps", "disk_all_write_kbps")):
             disk_rows += 1
             dr = float(row["disk_all_read_kbps"])
@@ -290,28 +389,55 @@ def _summarize(samples: list[dict[str, Any]]) -> MetricSummary:
     ms.sample_count_valid_mem = mem_rows
 
     if cpu_utils:
+        s = sorted(cpu_utils)
         ms.max_cpu_utilization_percent = round(max(cpu_utils), 2)
         ms.avg_cpu_utilization_percent = avg(cpu_utils)
+        ms.p95_cpu_utilization_percent = _percentile(s, 95)
+    if cpu_user_vals:
+        s = sorted(cpu_user_vals)
+        ms.max_cpu_user = round(max(cpu_user_vals), 2)
+        ms.avg_cpu_user = avg(cpu_user_vals)
+        ms.p95_cpu_user = _percentile(s, 95)
+    if cpu_sys_vals:
+        s = sorted(cpu_sys_vals)
+        ms.max_cpu_sys = round(max(cpu_sys_vals), 2)
+        ms.avg_cpu_sys = avg(cpu_sys_vals)
+        ms.p95_cpu_sys = _percentile(s, 95)
     if disk_read:
+        s = sorted(disk_read)
         ms.max_disk_read_kbps = round(max(disk_read), 2)
         ms.avg_disk_read_kbps = avg(disk_read)
+        ms.p95_disk_read_kbps = _percentile(s, 95)
     if disk_write:
+        s = sorted(disk_write)
         ms.max_disk_write_kbps = round(max(disk_write), 2)
         ms.avg_disk_write_kbps = avg(disk_write)
+        ms.p95_disk_write_kbps = _percentile(s, 95)
     if disk_total:
+        s = sorted(disk_total)
         ms.max_disk_total_kbps = round(max(disk_total), 2)
         ms.avg_disk_total_kbps = avg(disk_total)
+        ms.p95_disk_total_kbps = _percentile(s, 95)
     if read_iops:
+        s = sorted(read_iops)
         ms.max_read_iops_estimated = round(max(read_iops), 2)
         ms.avg_read_iops_estimated = avg(read_iops)
+        ms.p95_read_iops_estimated = _percentile(s, 95)
     if write_iops:
+        s = sorted(write_iops)
         ms.max_write_iops_estimated = round(max(write_iops), 2)
         ms.avg_write_iops_estimated = avg(write_iops)
+        ms.p95_write_iops_estimated = _percentile(s, 95)
     if total_iops:
+        s = sorted(total_iops)
         ms.max_iops_estimated = round(max(total_iops), 2)
         ms.avg_iops_estimated = avg(total_iops)
+        ms.p95_iops_estimated = _percentile(s, 95)
     if mem_used:
+        s = sorted(mem_used)
         ms.max_mem_used_gib = round(max(mem_used), 2)
+        ms.avg_mem_used_gib = avg(mem_used)
+        ms.p95_mem_used_gib = _percentile(s, 95)
     if mem_free:
         ms.min_mem_free_gib = round(min(mem_free), 2)
 
@@ -349,10 +475,59 @@ def parse_pmdumptext_log(
 
     summary = _summarize(samples)
     summary_dict = asdict(summary)
+    disk_dev_summary = _summarize_disk_devices(samples, metric_names)
+    if disk_dev_summary:
+        summary_dict["disk_devices"] = disk_dev_summary
     net_summary = _summarize_network(samples, metric_names)
     if net_summary:
         summary_dict["network"] = net_summary
     return samples, summary_dict
+
+
+def _build_monitoring_doc(
+    report: dict[str, Any],
+    bench_log: Path | None,
+    client_log: Path | None,
+) -> dict[str, Any]:
+    """Build a standalone monitoring.json with per-host aggregate statistics."""
+    mon: dict[str, Any] = {}
+    for key, log_path in [("bench", bench_log), ("client", client_log)]:
+        metrics = report.get(f"{key}_metrics")
+        if not isinstance(metrics, dict):
+            continue
+        summary = metrics.get("summary")
+        if isinstance(summary, dict):
+            mon[key] = deepcopy(summary)
+    mon["raw_data_files"] = {
+        "bench_metrics_log": bench_log.name if bench_log and bench_log.is_file() else "",
+        "client_metrics_log": client_log.name if client_log and client_log.is_file() else "",
+    }
+    return mon
+
+
+def _build_results_doc(report: dict[str, Any]) -> dict[str, Any]:
+    """Build a standalone results.json with benchmark KPIs only (no samples)."""
+    res: dict[str, Any] = {}
+    for key in (
+        "run_id",
+        "benchmark_tuning_profile",
+        "bench",
+        "client",
+        "postgresql",
+        "hammerdb",
+        "results",
+        "timing",
+    ):
+        if key in report:
+            res[key] = deepcopy(report[key])
+    return res
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    path.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
 
 
 def main() -> None:
@@ -378,6 +553,16 @@ def main() -> None:
         action="store_true",
         help="Only write summary (omit per-sample arrays)",
     )
+    ap.add_argument(
+        "--monitoring-json",
+        type=Path,
+        help="Write a separate monitoring.json with aggregate PCP statistics (mean/max/p95)",
+    )
+    ap.add_argument(
+        "--results-json",
+        type=Path,
+        help="Write a separate results.json with benchmark KPIs only (no metric samples)",
+    )
     args = ap.parse_args()
 
     report: dict[str, Any] = {}
@@ -390,7 +575,7 @@ def main() -> None:
 
     log_path = args.log.expanduser().resolve() if args.log else None
     if log_path and log_path.is_file():
-        hm = report.get("host_metrics")
+        hm = report.get("bench_metrics")
         names = None
         if isinstance(hm, dict):
             raw = hm.get("pmdumptext_metric_names")
@@ -403,17 +588,17 @@ def main() -> None:
         }
         if not args.no_samples:
             metrics_block["samples"] = samples
-        host_metrics = report.get("host_metrics")
-        if isinstance(host_metrics, dict):
-            report["host_metrics"] = _deep_merge(host_metrics, metrics_block)
+        bench_metrics = report.get("bench_metrics")
+        if isinstance(bench_metrics, dict):
+            report["bench_metrics"] = _deep_merge(bench_metrics, metrics_block)
         else:
-            report["host_metrics"] = metrics_block
+            report["bench_metrics"] = metrics_block
 
     client_log_path = (
         args.client_log.expanduser().resolve() if args.client_log else None
     )
     if client_log_path and client_log_path.is_file():
-        cm = report.get("client_host_metrics")
+        cm = report.get("client_metrics")
         names_c = None
         if isinstance(cm, dict):
             raw_c = cm.get("pmdumptext_metric_names")
@@ -426,14 +611,21 @@ def main() -> None:
         }
         if not args.no_samples:
             client_block["samples"] = samples_c
-        existing_client = report.get("client_host_metrics")
+        existing_client = report.get("client_metrics")
         if isinstance(existing_client, dict):
-            report["client_host_metrics"] = _deep_merge(existing_client, client_block)
+            report["client_metrics"] = _deep_merge(existing_client, client_block)
         else:
-            report["client_host_metrics"] = client_block
+            report["client_metrics"] = client_block
 
-    args.output.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    _write_json(args.output, report)
+
+    if args.monitoring_json:
+        mon = _build_monitoring_doc(report, log_path, client_log_path)
+        _write_json(args.monitoring_json, mon)
+
+    if args.results_json:
+        res = _build_results_doc(report)
+        _write_json(args.results_json, res)
 
 
 if __name__ == "__main__":

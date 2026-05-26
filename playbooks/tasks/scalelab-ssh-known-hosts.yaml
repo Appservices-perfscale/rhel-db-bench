@@ -1,0 +1,13 @@
+---
+# Expects scalelab_ssh_hostnames (list of FQDNs). Used by auto-schedule and scalelab-cleanup only.
+# Disable: -e scalelab_refresh_ssh_known_hosts=false
+- name: Remove stale SSH host keys (QUADS reprovision)
+  become: false
+  ansible.builtin.command:
+    cmd: ssh-keygen -R {{ item }}
+  loop: "{{ scalelab_ssh_hostnames | default([]) }}"
+  changed_when: true
+  failed_when: false
+  when:
+    - scalelab_refresh_ssh_known_hosts | default(true) | bool
+    - scalelab_ssh_hostnames | default([]) | length > 0

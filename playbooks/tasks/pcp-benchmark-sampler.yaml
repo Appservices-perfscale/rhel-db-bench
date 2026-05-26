@@ -1,0 +1,53 @@
+---
+# Start pmdumptext for one benchmark window. Caller sets metric list + remote paths + pid file.
+# Packages must already be installed (playbooks/setup.yaml). Requires pmcd running.
+- name: Ensure pmcd is running
+  when: pcp_capture_enable | default(true) | bool
+  ansible.builtin.systemd:
+    name: pmcd
+    state: started
+  changed_when: false
+
+- name: Ensure metrics work directory exists
+  when: pcp_capture_enable | default(true) | bool
+  ansible.builtin.file:
+    path: "{{ hammerdb_remote_workdir }}"
+    state: directory
+    mode: "0755"
+
+- name: Reset metrics sampler files
+  when: pcp_capture_enable | default(true) | bool
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ _metrics_samples_remote_path }}"
+    - "{{ _metrics_pmdumptext_pidfile }}"
+
+- name: Start PCP pmdumptext during benchmark window
+  when: pcp_capture_enable | default(true) | bool
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+    PMDUMP={{ pcp_pmdumptext_bin | default('') | trim | quote }}
+    if [ -z "$PMDUMP" ] || [ ! -x "$PMDUMP" ]; then
+      for c in /usr/bin/pmdumptext /usr/sbin/pmdumptext \
+        /usr/libexec/pcp/bin/pmdumptext /usr/lib/pcp/bin/pmdumptext; do
+        if [ -x "$c" ]; then PMDUMP=$c; break; fi
+      done
+    fi
+    if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
+      for f in $(rpm -ql pcp pcp-system-tools pcp-gui 2>/dev/null | grep -E '/pmdumptext$' || true); do
+        if [ -x "$f" ]; then PMDUMP=$f; break; fi
+      done
+    fi
+    if [ -z "${PMDUMP:-}" ]; then PMDUMP=$(command -v pmdumptext || true); fi
+    if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
+      echo "pmdumptext not found — run playbooks/setup.yaml first (pcp-gui / pcp-system-tools)" >&2
+      exit 1
+    fi
+    nohup "$PMDUMP" -t {{ pcp_sample_interval_sec | default(5) | int }} \
+      {{ _metrics_pmdumptext_names | map('quote') | join(' ') }} \
+      > "{{ _metrics_samples_remote_path }}" 2>&1 &
+    echo $! > "{{ _metrics_pmdumptext_pidfile }}"
+  changed_when: true

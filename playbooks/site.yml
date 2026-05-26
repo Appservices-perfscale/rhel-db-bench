@@ -1,693 +1,145 @@
 ---
-# Bench: PostgreSQL + metrics. Client: HammerDB load against bench-vm (pgsql_host = bench ansible_host).
-- name: PostgreSQL prep and host metrics start on database host (bench)
-  hosts: bench
-  gather_facts: true
-  vars:
-    ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
-    _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
-    _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
-    _benchmark_run_id: >-
-      {{
-        (perf_run_stamp | default('') | string | trim)
-        if (perf_run_stamp | default('') | string | trim | length) > 0
-        else (ansible_date_time.date | replace('-', '')) ~ '-' ~ (ansible_date_time.time | replace(':', ''))
-      }}
-    _host_metrics_samples_basename: "{{ _benchmark_run_id }}-host-metrics-samples.log"
-    _host_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _host_metrics_samples_basename }}"
-    _host_metrics_pmdumptext_pidfile: "{{ hammerdb_remote_workdir }}/.host-metrics-pmdumptext.pid"
-    pcp_disk_dev_instances:
-      - nvme0n1
-      - nvme1n1
-      - nvme2n1
-      - nvme3n1
-      - sda
-    pcp_network_interface_instances: []
-    pcp_pmdumptext_metrics_default:
-      - kernel.all.cpu.user
-      - kernel.all.cpu.sys
-      - kernel.all.cpu.idle
-      - mem.util.used
-      - mem.util.free
-      - disk.all.read
-      - disk.all.write
-  tasks:
-    - name: Sync and drop kernel page cache / slab caches (buff/cache)
-      ansible.builtin.shell: set -euo pipefail; sync; echo 3 > /proc/sys/vm/drop_caches
-      changed_when: true
+# Full benchmark pipeline: run HammerDB test, generate results.json + monitoring.json,
+# fetch all artifacts from remote hosts, and combine into a master JSON file.
+#
+#   ansible-playbook playbooks/site.yml
+#   ansible-playbook playbooks/site.yml -e hammerdb_virtual_users=56
+#
+# Requires playbooks/setup.yaml to have been run once before the first benchmark.
+# Produces in results/:
+#   <run_id>-benchmark-report.json   — full report with PCP samples
+#   <run_id>-results.json            — HammerDB KPIs only
+#   <run_id>-monitoring.json         — aggregate PCP statistics (mean/max/p95)
+#   <run_id>-bench-metrics-samples.log  — raw PCP data (bench)
+#   <run_id>-client-metrics-samples.log — raw PCP data (client)
+#   <run_id>-master.json             — combined master with facts + results + monitoring
 
-    # Play vars are not reliably visible via hostvars to later plays; persist for the report play on localhost.
-    - name: Persist benchmark run id on bench host for controller report
-      ansible.builtin.set_fact:
-        _benchmark_run_id: "{{ _benchmark_run_id }}"
+# ── Phase 1: Run the benchmark (HammerDB + PCP collection + report) ──
+- import_playbook: test.yaml
 
-    - name: Set postgres superuser password (peer auth via local socket)
-      community.postgresql.postgresql_user:
-        name: "{{ pgsql_superuser }}"
-        password: "{{ pgsql_superuser_password }}"
-        role_attr_flags: SUPERUSER
-        login_user: "{{ pgsql_superuser }}"
-      become_user: postgres
-      no_log: false
-
-    - name: Build PostgreSQL low-variance tuning list from inventory
-      ansible.builtin.set_fact:
-        pgsql_low_variance_tuning:
-          - { param: work_mem, value: "{{ pgsql_tune_work_mem }}" }
-          - { param: maintenance_work_mem, value: "{{ pgsql_tune_maintenance_work_mem }}" }
-          - { param: bgwriter_lru_maxpages, value: "{{ pgsql_tune_bgwriter_lru_maxpages | string }}" }
-          - { param: bgwriter_flush_after, value: "{{ pgsql_tune_bgwriter_flush_after | string }}" }
-          - { param: fsync, value: "{{ pgsql_tune_fsync }}" }
-          - { param: synchronous_commit, value: "{{ pgsql_tune_synchronous_commit }}" }
-          - { param: checkpoint_timeout, value: "{{ pgsql_tune_checkpoint_timeout }}" }
-          - { param: checkpoint_completion_target, value: "{{ pgsql_tune_checkpoint_completion_target | string }}" }
-          - { param: max_wal_size, value: "{{ pgsql_tune_max_wal_size }}" }
-          - { param: min_wal_size, value: "{{ pgsql_tune_min_wal_size }}" }
-          - { param: random_page_cost, value: "{{ pgsql_tune_random_page_cost | string }}" }
-          - { param: cpu_tuple_cost, value: "{{ pgsql_tune_cpu_tuple_cost | string }}" }
-          - { param: effective_cache_size, value: "{{ pgsql_tune_effective_cache_size }}" }
-          - { param: log_min_duration_statement, value: "{{ pgsql_tune_log_min_duration_statement | string }}" }
-          - { param: autovacuum, value: "{{ pgsql_tune_autovacuum }}" }
-          - { param: autovacuum_max_workers, value: "{{ pgsql_tune_autovacuum_max_workers | string }}" }
-          - { param: autovacuum_vacuum_cost_limit, value: "{{ pgsql_tune_autovacuum_vacuum_cost_limit | string }}" }
-          - { param: lc_messages, value: "{{ pgsql_tune_lc_messages }}" }
-          - { param: log_checkpoints, value: "{{ pgsql_tune_log_checkpoints }}" }
-      when: pgsql_benchmark_low_variance_tune | default(false) | bool
-
-    - name: Apply PostgreSQL low-variance benchmark tuning (ALTER SYSTEM)
-      community.postgresql.postgresql_alter_system:
-        param: "{{ item.param }}"
-        value: "{{ item.value }}"
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        login_db: postgres
-      loop: "{{ pgsql_low_variance_tuning }}"
-      loop_control:
-        label: "{{ item.param }}={{ item.value }}"
-      register: pgsql_low_variance_tune_alter
-      when: pgsql_benchmark_low_variance_tune | default(false) | bool
-
-    - name: Restart PostgreSQL if tuning requires it
-      ansible.builtin.systemd:
-        name: "{{ postgresql_service_name }}"
-        state: restarted
-      when:
-        - pgsql_benchmark_low_variance_tune | default(false) | bool
-        - not (pgsql_low_variance_tune_alter.skipped | default(false))
-        - >-
-          pgsql_low_variance_tune_alter.get('results', [])
-          | selectattr('restart_required', 'defined')
-          | selectattr('restart_required') | list | length > 0
-
-    - name: Create benchmark database role
-      community.postgresql.postgresql_user:
-        name: "{{ pgsql_benchmark_user }}"
-        password: "{{ pgsql_benchmark_password }}"
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: postgres
-      no_log: false
-
-    - name: Create benchmark database
-      community.postgresql.postgresql_db:
-        name: "{{ pgsql_benchmark_db }}"
-        owner: "{{ pgsql_benchmark_user }}"
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-
-    - name: Grant all privileges on benchmark database to benchmark user
-      community.postgresql.postgresql_query:
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: postgres
-        query: GRANT ALL PRIVILEGES ON DATABASE "{{ pgsql_benchmark_db }}" TO "{{ pgsql_benchmark_user }}"
-      no_log: true
-
-    - name: Set PostgreSQL listen_addresses for remote HammerDB client
-      community.postgresql.postgresql_alter_system:
-        param: listen_addresses
-        value: "{{ pgsql_listen_addresses }}"
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        login_db: postgres
-      register: pgsql_listen_alter
-
-    - name: Allow password-authenticated clients from load generator network in pg_hba.conf
-      community.postgresql.postgresql_pg_hba:
-        dest: "{{ pgsql_data_dir }}/pg_hba.conf"
-        contype: host
-        address: "{{ pgsql_benchmark_client_hba_network }}"
-        databases: all
-        users: all
-        method: "{{ pgsql_client_auth_method | default('scram-sha-256') }}"
-        state: present
-      register: pgsql_hba_remote
-
-    - name: Restart PostgreSQL after listen_addresses or pg_hba changes
-      ansible.builtin.systemd:
-        name: "{{ postgresql_service_name }}"
-        state: restarted
-      when: (pgsql_listen_alter.changed | default(false)) or (pgsql_hba_remote.changed | default(false))
-
-    - name: Install PCP (system metrics via pmcd / pmdumptext)
-      ansible.builtin.dnf:
-        name:
-          - pcp
-          - pcp-system-tools
-          - pcp-gui
-        state: present
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Enable and start pmcd for PCP sampling
-      ansible.builtin.systemd:
-        name: pmcd
-        enabled: true
-        state: started
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Record test start epoch
-      ansible.builtin.command: date +%s
-      register: test_start_time
-      changed_when: false
-
-    - name: Set test start epoch fact
-      ansible.builtin.set_fact:
-        test_start_epoch: "{{ test_start_time.stdout }}"
-
-    - name: Checkpoint cluster before HammerDB schema build
-      community.postgresql.postgresql_query:
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: postgres
-        query: CHECKPOINT
-        autocommit: true
-
-    - name: Vacuum benchmark database before HammerDB schema build
-      community.postgresql.postgresql_query:
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: "{{ pgsql_benchmark_db }}"
-        query: VACUUM
-        autocommit: true
-
-    - name: Build disk.dev metric names for configured block devices
-      ansible.builtin.set_fact:
-        _host_metrics_disk_dev_pairs: "{{ _host_metrics_disk_dev_pairs | default([]) + ['disk.dev.read[' ~ item ~ ']', 'disk.dev.write[' ~ item ~ ']'] }}"
-      loop: "{{ pcp_disk_dev_instances }}"
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Resolve effective network interfaces for PCP metrics
-      ansible.builtin.set_fact:
-        _pcp_network_iface_list: >-
-          {{
-            (pcp_network_interface_instances | default([]))
-            if (pcp_network_interface_instances | default([]) | length) > 0
-            else (
-              [ansible_default_ipv4.interface]
-              if ansible_default_ipv4 is defined and ansible_default_ipv4.interface is defined
-              else []
-            )
-          }}
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Build network.interface byte metrics for configured interfaces
-      ansible.builtin.set_fact:
-        _host_metrics_network_iface_pairs: "{{ _host_metrics_network_iface_pairs | default([]) + ['network.interface.in.bytes[' ~ item ~ ']', 'network.interface.out.bytes[' ~ item ~ ']'] }}"
-      loop: "{{ _pcp_network_iface_list | default([]) }}"
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Resolve pmdumptext metric list for this run
-      ansible.builtin.set_fact:
-        _host_metrics_pmdumptext_names: >-
-          {{
-            pcp_pmdumptext_metrics
-            if pcp_pmdumptext_metrics is defined
-            else (
-              pcp_pmdumptext_metrics_default
-              + (_host_metrics_disk_dev_pairs | default([]))
-              + (_host_metrics_network_iface_pairs | default([]))
-            )
-          }}
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Reset host metrics sampler files on bench
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "{{ _host_metrics_samples_remote_path }}"
-        - "{{ _host_metrics_pmdumptext_pidfile }}"
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Start PCP pmdumptext during benchmark window
-      ansible.builtin.shell: |
-        set -euo pipefail
-        export PATH="/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
-        PMDUMP={{ pcp_pmdumptext_bin | default('') | trim | quote }}
-        if [ -z "$PMDUMP" ] || [ ! -x "$PMDUMP" ]; then
-          for c in /usr/bin/pmdumptext /usr/sbin/pmdumptext \
-            /usr/libexec/pcp/bin/pmdumptext /usr/lib/pcp/bin/pmdumptext; do
-            if [ -x "$c" ]; then PMDUMP=$c; break; fi
-          done
-        fi
-        if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
-          for f in $(rpm -ql pcp pcp-system-tools pcp-gui 2>/dev/null | grep -E '/pmdumptext$' || true); do
-            if [ -x "$f" ]; then PMDUMP=$f; break; fi
-          done
-        fi
-        if [ -z "${PMDUMP:-}" ]; then PMDUMP=$(command -v pmdumptext || true); fi
-        if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
-          echo "pmdumptext not found (install pcp-gui or pcp-system-tools per OS; ensure pmcd is running)" >&2
-          exit 1
-        fi
-        nohup "$PMDUMP" -t {{ pcp_sample_interval_sec | default(5) | int }} \
-          {{ _host_metrics_pmdumptext_names | map('quote') | join(' ') }} \
-          > "{{ _host_metrics_samples_remote_path }}" 2>&1 &
-        echo $! > "{{ _host_metrics_pmdumptext_pidfile }}"
-      when: pcp_capture_enable | default(true) | bool
-      changed_when: true
-
-- name: HammerDB TPC-C workload on client (targets PostgreSQL on bench-vm)
-  hosts: client
-  gather_facts: true
-  vars:
-    ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
-    _bench_inventory_name: "{{ groups['bench'][0] }}"
-    pgsql_host: "{{ hostvars[_bench_inventory_name]['ansible_host'] }}"
-    pgsql_port: "{{ hostvars[_bench_inventory_name]['pgsql_port'] }}"
-    pgsql_superuser: "{{ hostvars[_bench_inventory_name]['pgsql_superuser'] }}"
-    pgsql_superuser_password: "{{ hostvars[_bench_inventory_name]['pgsql_superuser_password'] }}"
-    pgsql_benchmark_user: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_user'] }}"
-    pgsql_benchmark_password: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_password'] }}"
-    pgsql_benchmark_db: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_db'] }}"
-    _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
-    _benchmark_run_id: "{{ hostvars[_bench_inventory_name]['_benchmark_run_id'] }}"
-    _client_host_metrics_basename: "{{ _benchmark_run_id }}-client-host-metrics-samples.log"
-    _client_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _client_host_metrics_basename }}"
-    _client_metrics_pmdumptext_pidfile: "{{ hammerdb_remote_workdir }}/.client-host-metrics-pmdumptext.pid"
-    pcp_disk_dev_instances:
-      - nvme0n1
-      - nvme1n1
-      - nvme2n1
-      - nvme3n1
-      - sda
-    pcp_network_interface_instances: []
-    pcp_pmdumptext_metrics_default:
-      - kernel.all.cpu.user
-      - kernel.all.cpu.sys
-      - kernel.all.cpu.idle
-      - mem.util.used
-      - mem.util.free
-      - disk.all.read
-      - disk.all.write
-  tasks:
-    - name: Install Podman
-      ansible.builtin.dnf:
-        name: podman
-        state: present
-
-    - name: Pull HammerDB PostgreSQL container image
-      ansible.builtin.command: podman pull {{ hammerdb_container_image }}
-      register: hammerdb_pull
-      changed_when: false
-      failed_when: hammerdb_pull.rc != 0
-
-    - name: Ensure remote work directory for HammerDB scripts exists
-      ansible.builtin.file:
-        path: "{{ hammerdb_remote_workdir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Deploy HammerDB test scripts
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../templates/{{ item.src }}"
-        dest: "{{ hammerdb_remote_workdir }}/{{ item.dest }}"
-        mode: "0644"
-      loop:
-        - { src: hammerdb-tpcc-setup.tcl.j2, dest: setup.tcl }
-        - { src: hammerdb-tpcc-run.tcl.j2, dest: run.tcl }
-        - { src: hammerdb-tpcc-cleanup.tcl.j2, dest: cleanup.tcl }
-
-    - name: Verify load generator can open TCP to PostgreSQL (bench)
-      ansible.builtin.wait_for:
-        host: "{{ pgsql_host }}"
-        port: "{{ pgsql_port | int }}"
-        state: started
-        delay: 0
-        timeout: 180
-
-    - name: Install PCP on load generator (CPU / memory / disk metrics)
-      ansible.builtin.dnf:
-        name:
-          - pcp
-          - pcp-system-tools
-          - pcp-gui
-        state: present
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Enable and start pmcd on load generator
-      ansible.builtin.systemd:
-        name: pmcd
-        enabled: true
-        state: started
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Resolve effective network interfaces for PCP metrics (load generator)
-      ansible.builtin.set_fact:
-        _pcp_network_iface_list: >-
-          {{
-            (pcp_network_interface_instances | default([]))
-            if (pcp_network_interface_instances | default([]) | length) > 0
-            else (
-              [ansible_default_ipv4.interface]
-              if ansible_default_ipv4 is defined and ansible_default_ipv4.interface is defined
-              else []
-            )
-          }}
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Build disk.dev metric names for client block devices
-      ansible.builtin.set_fact:
-        _client_metrics_disk_dev_pairs: "{{ _client_metrics_disk_dev_pairs | default([]) + ['disk.dev.read[' ~ item ~ ']', 'disk.dev.write[' ~ item ~ ']'] }}"
-      loop: "{{ pcp_disk_dev_instances }}"
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Build network.interface byte metrics for load generator
-      ansible.builtin.set_fact:
-        _client_metrics_network_iface_pairs: "{{ _client_metrics_network_iface_pairs | default([]) + ['network.interface.in.bytes[' ~ item ~ ']', 'network.interface.out.bytes[' ~ item ~ ']'] }}"
-      loop: "{{ _pcp_network_iface_list | default([]) }}"
-      when:
-        - pcp_capture_enable | default(true) | bool
-        - pcp_pmdumptext_metrics is not defined
-
-    - name: Resolve pmdumptext metric list on load generator
-      ansible.builtin.set_fact:
-        _client_metrics_pmdumptext_names: >-
-          {{
-            pcp_pmdumptext_metrics
-            if pcp_pmdumptext_metrics is defined
-            else (
-              pcp_pmdumptext_metrics_default
-              + (_client_metrics_disk_dev_pairs | default([]))
-              + (_client_metrics_network_iface_pairs | default([]))
-            )
-          }}
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Reset client host metrics sampler files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "{{ _client_metrics_samples_remote_path }}"
-        - "{{ _client_metrics_pmdumptext_pidfile }}"
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Start PCP pmdumptext on load generator for HammerDB window
-      ansible.builtin.shell: |
-        set -euo pipefail
-        export PATH="/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
-        PMDUMP={{ pcp_pmdumptext_bin | default('') | trim | quote }}
-        if [ -z "$PMDUMP" ] || [ ! -x "$PMDUMP" ]; then
-          for c in /usr/bin/pmdumptext /usr/sbin/pmdumptext \
-            /usr/libexec/pcp/bin/pmdumptext /usr/lib/pcp/bin/pmdumptext; do
-            if [ -x "$c" ]; then PMDUMP=$c; break; fi
-          done
-        fi
-        if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
-          for f in $(rpm -ql pcp pcp-system-tools pcp-gui 2>/dev/null | grep -E '/pmdumptext$' || true); do
-            if [ -x "$f" ]; then PMDUMP=$f; break; fi
-          done
-        fi
-        if [ -z "${PMDUMP:-}" ]; then PMDUMP=$(command -v pmdumptext || true); fi
-        if [ -z "${PMDUMP:-}" ] || [ ! -x "$PMDUMP" ]; then
-          echo "pmdumptext not found (install pcp-gui or pcp-system-tools per OS; ensure pmcd is running)" >&2
-          exit 1
-        fi
-        nohup "$PMDUMP" -t {{ pcp_sample_interval_sec | default(5) | int }} \
-          {{ _client_metrics_pmdumptext_names | map('quote') | join(' ') }} \
-          > "{{ _client_metrics_samples_remote_path }}" 2>&1 &
-        echo $! > "{{ _client_metrics_pmdumptext_pidfile }}"
-      when: pcp_capture_enable | default(true) | bool
-      changed_when: true
-
-    - name: Setup HammerDB schema (build)
-      ansible.builtin.shell: |
-        set -o pipefail
-        cd {{ hammerdb_remote_workdir | quote }}
-        cat setup.tcl | podman run --network=host --rm -it \
-          -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 \
-          {{ hammerdb_container_image }} \
-          ./hammerdbcli 2>&1 | iconv -c -f UTF-8 -t UTF-8
-      register: hammerdb_setup_out
-
-    - name: Show HammerDB setup output
-      ansible.builtin.debug:
-        var: hammerdb_setup_out
-
-    - name: Assert HammerDB setup finished successfully
-      vars:
-        lines_all: "{{ hammerdb_setup_out.stdout_lines | select('match', '.*:FINISHED .*') | list }}"
-        lines_succeeded: "{{ lines_all | select('match', '.*:FINISHED SUCCESS') | list }}"
-      ansible.builtin.assert:
-        that:
-          - lines_all | length > 0
-          - lines_all | length == lines_succeeded | length
-        fail_msg: "HammerDB setup did not report FINISHED SUCCESS for all steps. See hammerdb_setup_out."
-
-    - name: Run HammerDB benchmark
-      ansible.builtin.shell: |
-        set -o pipefail
-        cd {{ hammerdb_remote_workdir | quote }}
-        cat run.tcl | podman run --network=host --rm -it \
-          -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 \
-          {{ hammerdb_container_image }} \
-          ./hammerdbcli 2>&1 | iconv -c -f UTF-8 -t UTF-8
-      register: hammerdb_run_out
-
-    - name: Stop pmdumptext sampler on load generator
-      ansible.builtin.shell: |
-        set -euo pipefail
-        if [ -f "{{ _client_metrics_pmdumptext_pidfile }}" ]; then
-          kill "$(cat "{{ _client_metrics_pmdumptext_pidfile }}")" 2>/dev/null || true
-          rm -f "{{ _client_metrics_pmdumptext_pidfile }}"
-        fi
-      when: pcp_capture_enable | default(true) | bool
-      changed_when: false
-
-    - name: Fetch load generator metrics sample log to controller
-      ansible.builtin.fetch:
-        src: "{{ _client_metrics_samples_remote_path }}"
-        dest: "{{ _benchmark_results_dir }}/{{ _client_host_metrics_basename }}"
-        flat: true
-        fail_on_missing: false
-      register: client_host_metrics_fetch
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Record load generator metrics facts for controller report
-      ansible.builtin.set_fact:
-        client_host_metrics_samples_log_basename: "{{ _client_host_metrics_basename }}"
-        client_host_metrics_samples_log_fetched: "{{ client_host_metrics_fetch is succeeded }}"
-        client_host_metrics_pmdumptext_metric_names: "{{ _client_metrics_pmdumptext_names }}"
-        client_host_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(5) | int }}"
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Show HammerDB run output
-      ansible.builtin.debug:
-        var: hammerdb_run_out
-
-    - name: Assert HammerDB run finished successfully
-      vars:
-        lines_all: "{{ hammerdb_run_out.stdout_lines | select('match', '.*:FINISHED .*') | list }}"
-        lines_succeeded: "{{ lines_all | select('match', '.*:FINISHED SUCCESS') | list }}"
-      ansible.builtin.assert:
-        that:
-          - lines_all | length > 0
-          - lines_all | length == lines_succeeded | length
-        fail_msg: "HammerDB run did not report FINISHED SUCCESS for all steps. See hammerdb_run_out."
-
-    - name: Parse NOPM and TPM from HammerDB output
-      ansible.builtin.set_fact:
-        result_nopm: "{{ hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved ([0-9]+) NOPM from [0-9]+ PostgreSQL TPM') | first | default('') }}"
-        result_tpm: "{{ hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved [0-9]+ NOPM from ([0-9]+) PostgreSQL TPM') | first | default('') }}"
-
-    - name: Show parsed results
-      ansible.builtin.debug:
-        msg: "RESULTS: NOPM = {{ result_nopm }}, TPM = {{ result_tpm }}"
-
-    - name: Record test end epoch
-      ansible.builtin.command: date +%s
-      register: test_end_time
-      changed_when: false
-
-    - name: Set test end epoch fact
-      ansible.builtin.set_fact:
-        test_end_epoch: "{{ test_end_time.stdout }}"
-
-- name: Stop metrics sampling and drop benchmark database on bench
-  hosts: bench
-  gather_facts: false
-  vars:
-    ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
-    _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
-    _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
-    _benchmark_run_id: "{{ hostvars[inventory_hostname]['_benchmark_run_id'] }}"
-    _host_metrics_samples_basename: "{{ _benchmark_run_id }}-host-metrics-samples.log"
-    _host_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _host_metrics_samples_basename }}"
-    _host_metrics_pmdumptext_pidfile: "{{ hammerdb_remote_workdir }}/.host-metrics-pmdumptext.pid"
-  tasks:
-    - name: Stop pmdumptext host metrics sampler
-      ansible.builtin.shell: |
-        set -euo pipefail
-        if [ -f "{{ _host_metrics_pmdumptext_pidfile }}" ]; then
-          kill "$(cat "{{ _host_metrics_pmdumptext_pidfile }}")" 2>/dev/null || true
-          rm -f "{{ _host_metrics_pmdumptext_pidfile }}"
-        fi
-      when: pcp_capture_enable | default(true) | bool
-      changed_when: false
-
-    - name: Fetch host metrics sample log to controller
-      ansible.builtin.fetch:
-        src: "{{ _host_metrics_samples_remote_path }}"
-        dest: "{{ _benchmark_results_dir }}/{{ _host_metrics_samples_basename }}"
-        flat: true
-        fail_on_missing: false
-      register: host_metrics_fetch
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Record host metrics artifact facts for controller report
-      ansible.builtin.set_fact:
-        host_metrics_samples_log_basename: "{{ _host_metrics_samples_basename }}"
-        host_metrics_samples_log_fetched: "{{ host_metrics_fetch is succeeded }}"
-        host_metrics_pmdumptext_metric_names: "{{ _host_metrics_pmdumptext_names }}"
-        host_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(5) | int }}"
-      when: pcp_capture_enable | default(true) | bool
-
-    - name: Drop benchmark database
-      community.postgresql.postgresql_db:
-        name: "{{ pgsql_benchmark_db }}"
-        state: absent
-        maintenance_db: postgres
-        login_host: "{{ _pgsql_connect_host }}"
-        login_user: "{{ pgsql_superuser }}"
-        login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        force: true
-
-- name: Write benchmark report (local controller)
+# ── Phase 2: Fetch facts.json and assemble master JSON ──
+- name: Fetch facts and assemble master JSON on controller
   hosts: localhost
   connection: local
   gather_facts: false
   become: false
   vars:
-    results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
     _bench: "{{ groups['bench'][0] }}"
     _client: "{{ groups['client'][0] }}"
-    _bv: "{{ hostvars[_bench] }}"
-    _cv: "{{ hostvars[_client] }}"
-    benchmark_run_id: "{{ _bv['_benchmark_run_id'] | string }}"
-    benchmark_report_path: "{{ results_dir }}/{{ benchmark_run_id }}-benchmark-report.json"
-    benchmark_report_partial_path: "{{ results_dir }}/.{{ benchmark_run_id }}-benchmark-report.partial.json"
-    host_metrics_samples_log_controller: "{{ results_dir }}/{{ _bv.get('host_metrics_samples_log_basename', '') }}"
-    client_host_metrics_samples_log_controller: "{{ results_dir }}/{{ _cv.get('client_host_metrics_samples_log_basename', '') }}"
+    results_dir: "{{ hostvars['localhost']['_test_results_dir'] | default(playbook_dir ~ '/../results') }}"
+    run_id: "{{ hostvars['localhost']['_test_benchmark_run_id'] | default('unknown') }}"
+    results_json: "{{ hostvars['localhost']['_test_results_json_path'] | default(results_dir ~ '/' ~ run_id ~ '-results.json') }}"
+    monitoring_json: "{{ hostvars['localhost']['_test_monitoring_json_path'] | default(results_dir ~ '/' ~ run_id ~ '-monitoring.json') }}"
+    bench_metrics_log: "{{ hostvars['localhost']['_test_bench_metrics_log'] | default('') }}"
+    client_metrics_log: "{{ hostvars['localhost']['_test_client_metrics_log'] | default('') }}"
+    master_json_path: "{{ results_dir }}/{{ run_id }}-master.json"
+    facts_dir: "{{ results_dir }}/os-prep"
   tasks:
-    - name: Ensure results directory exists
-      ansible.builtin.file:
-        path: "{{ results_dir }}"
-        state: directory
-        mode: "0755"
+    - name: Locate facts.json files from os-prep
+      ansible.builtin.find:
+        paths: "{{ facts_dir }}"
+        patterns: "facts.json"
+        recurse: true
+      register: facts_files
 
-    - name: Build benchmark report base document from bench and client host facts
-      ansible.builtin.set_fact:
-        benchmark_report_base:
-          run_id: "{{ benchmark_run_id }}"
-          bench:
-            inventory_hostname: "{{ _bv['inventory_hostname'] }}"
-            ansible_host: "{{ _bv['ansible_host'] | default('') }}"
-          client:
-            inventory_hostname: "{{ _cv['inventory_hostname'] }}"
-            ansible_host: "{{ _cv['ansible_host'] | default('') }}"
-          postgresql:
-            data_directory: "{{ _bv['pgsql_data_dir'] | default('') }}"
-            service: "{{ _bv['postgresql_service_name'] | default('') }}"
-          hammerdb:
-            container_image: "{{ _cv['hammerdb_container_image'] | default('') }}"
-            virtual_users: "{{ _cv.get('hammerdb_virtual_users', '') | string }}"
-            warehouses: "{{ _cv.get('hammerdb_warehouses', '') | string }}"
-          results:
-            nopm: "{{ _cv.get('result_nopm', '') | string }}"
-            tpm: "{{ _cv.get('result_tpm', '') | string }}"
-          timing:
-            start_epoch: "{{ _bv.get('test_start_epoch', '') | string }}"
-            end_epoch: "{{ _cv.get('test_end_epoch', '') | string }}"
-          host_metrics:
-            capture_enabled: "{{ _bv.get('pcp_capture_enable', true) | bool }}"
-            sample_interval_sec: "{{ _bv.get('host_metrics_sample_interval_sec', _bv.get('pcp_sample_interval_sec', 5)) | int }}"
-            pmdumptext_metric_names: "{{ _bv.get('host_metrics_pmdumptext_metric_names', []) }}"
-            samples_log_filename: "{{ _bv.get('host_metrics_samples_log_basename', '') | string }}"
-            samples_log_fetched: "{{ _bv.get('host_metrics_samples_log_fetched', false) | bool }}"
-          client_host_metrics:
-            capture_enabled: "{{ _cv.get('pcp_capture_enable', true) | bool }}"
-            sample_interval_sec: "{{ _cv.get('client_host_metrics_sample_interval_sec', _cv.get('pcp_sample_interval_sec', 5)) | int }}"
-            pmdumptext_metric_names: "{{ _cv.get('client_host_metrics_pmdumptext_metric_names', []) }}"
-            samples_log_filename: "{{ _cv.get('client_host_metrics_samples_log_basename', '') | string }}"
-            samples_log_fetched: "{{ _cv.get('client_host_metrics_samples_log_fetched', false) | bool }}"
-
-    - name: Stage partial report for metrics merge
-      ansible.builtin.copy:
-        content: "{{ benchmark_report_base | to_nice_json }}\n"
-        dest: "{{ benchmark_report_partial_path }}"
-        mode: "0600"
-
-    - name: Merge host and client PCP logs into benchmark report
+    - name: Write merged facts.json to staging file
       ansible.builtin.shell: |
         set -euo pipefail
-        REPORT_PY="{{ playbook_dir }}/../scripts/pcp_metrics_log_to_json.py"
-        OUT="{{ benchmark_report_path }}"
-        BASE="{{ benchmark_report_partial_path }}"
-        LOG_BENCH="{{ host_metrics_samples_log_controller }}"
-        LOG_CLIENT="{{ client_host_metrics_samples_log_controller }}"
-        ARGS=(-o "$OUT" --base-json "$BASE")
-        if [ -f "$LOG_BENCH" ]; then ARGS+=(--log "$LOG_BENCH"); fi
-        if [ -f "$LOG_CLIENT" ]; then ARGS+=(--client-log "$LOG_CLIENT"); fi
-        python3 "$REPORT_PY" "${ARGS[@]}"
+        FACTS_DIR="{{ facts_dir }}"
+        STAGING="{{ results_dir }}/.{{ run_id }}-facts-merged.json"
+        if [ -d "$FACTS_DIR" ] && ls "$FACTS_DIR"/*/facts.json 1>/dev/null 2>&1; then
+          python3 - "$FACTS_DIR" "$STAGING" <<'PYEOF'
+        import json, sys, pathlib
+        d, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+        facts = {}
+        for p in sorted(d.rglob("facts.json")):
+            facts[p.parent.name] = json.loads(p.read_text())
+        out.write_text(json.dumps(facts, indent=2))
+        PYEOF
+        else
+          echo '{}' > "$STAGING"
+        fi
       args:
         executable: /bin/bash
       changed_when: true
 
-    - name: Remove partial report staging file
+    - name: Generate unique run ID and timestamps
+      ansible.builtin.shell: |
+        set -euo pipefail
+        RUN_ID="run-$(date --utc -Ins | sed 's/[^0-9A-Za-z-]\+/_/g')"
+        START_EPOCH="{{ hostvars[_bench].get('test_start_epoch', '') }}"
+        END_EPOCH="{{ hostvars[_client].get('test_end_epoch', '') }}"
+        if [ -n "$START_EPOCH" ]; then
+          STARTED=$(date -u -d "@${START_EPOCH}" --iso-8601=seconds 2>/dev/null || \
+            python3 -c "from datetime import datetime,timezone; print(datetime.fromtimestamp(int('${START_EPOCH}'),tz=timezone.utc).isoformat())")
+        else
+          STARTED=""
+        fi
+        if [ -n "$END_EPOCH" ]; then
+          ENDED=$(date -u -d "@${END_EPOCH}" --iso-8601=seconds 2>/dev/null || \
+            python3 -c "from datetime import datetime,timezone; print(datetime.fromtimestamp(int('${END_EPOCH}'),tz=timezone.utc).isoformat())")
+        else
+          ENDED=""
+        fi
+        printf '%s\n%s\n%s\n' "$RUN_ID" "$STARTED" "$ENDED"
+      args:
+        executable: /bin/bash
+      register: run_meta
+      changed_when: false
+
+    - name: Assemble master JSON with jq
+      vars:
+        _meta_lines: "{{ run_meta.stdout_lines | default(['', '', '']) }}"
+        _unique_id: "{{ _meta_lines[0] | default('') }}"
+        _started: "{{ _meta_lines[1] | default('') }}"
+        _ended: "{{ _meta_lines[2] | default('') }}"
+        _facts_staging: "{{ results_dir }}/.{{ run_id }}-facts-merged.json"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        RESULTS_JSON="{{ results_json }}"
+        MONITORING_JSON="{{ monitoring_json }}"
+        FACTS_FILE="{{ _facts_staging }}"
+        MASTER="{{ master_json_path }}"
+
+        [ ! -f "$FACTS_FILE" ] && echo '{}' > "$FACTS_FILE"
+        [ ! -f "$RESULTS_JSON" ] && RESULTS_JSON=/dev/null
+        [ ! -f "$MONITORING_JSON" ] && MONITORING_JSON=/dev/null
+
+        jq -n \
+          --arg id "{{ _unique_id }}" \
+          --arg started "{{ _started }}" \
+          --arg ended "{{ _ended }}" \
+          --slurpfile facts "$FACTS_FILE" \
+          --slurpfile results "$RESULTS_JSON" \
+          --slurpfile monitoring "$MONITORING_JSON" \
+          '{
+            id: $id,
+            started: $started,
+            ended: $ended,
+            facts: ($facts[0] // {}),
+            results: ($results[0] // {}),
+            monitoring: ($monitoring[0] // {})
+          }' > "$MASTER"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Clean up staging files
       ansible.builtin.file:
-        path: "{{ benchmark_report_partial_path }}"
+        path: "{{ results_dir }}/.{{ run_id }}-facts-merged.json"
         state: absent
+
+    - name: Show master JSON path
+      ansible.builtin.debug:
+        msg: "Master JSON written to {{ master_json_path }}"
+
+    - name: List all generated artifacts
+      ansible.builtin.debug:
+        msg: |
+          Artifacts for run {{ run_id }}:
+            master:       {{ master_json_path }}
+            results:      {{ results_json }}
+            monitoring:   {{ monitoring_json }}
+            bench PCP:    {{ bench_metrics_log }}
+            client PCP:   {{ client_metrics_log }}
+            full report:  {{ hostvars['localhost']['_test_benchmark_report_path'] | default('') }}

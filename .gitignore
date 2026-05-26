@@ -1,6 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
 # Ansible
 collections/
 .ansible/
 *.retry
 inventory.local.ini
+quads_cfg.yaml
+scalelab_assignment.yml
 
