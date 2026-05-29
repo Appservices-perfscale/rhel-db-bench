@@ -21,10 +21,25 @@ The goal is to measure **NOPM** (New Orders Per Minute) and **TPM** (Transaction
 2. os-setup.yaml        — Pin the exact RHEL compose on bench and client (distro-sync).
 3. setup.yaml           — One-time: install PostgreSQL, HammerDB, PCP, kernel tuning.
 4. test.yaml            — The actual benchmark run (this is what most of this doc explains).
-5. cleanup.yaml         — Reset state between runs so the next test.yaml starts clean.
+5. site.yml             — Full pipeline: test.yaml + master JSON assembly with OS facts.
+6. cleanup.yaml         — Reset state between runs so the next test.yaml starts clean.
+7. scalelab-cleanup.yaml — Release ScaleLab hosts when finished.
 ```
 
 `test.yaml` is the core. You run it once per benchmark measurement.
+`site.yml` wraps `test.yaml` and adds artifact assembly.
+
+**Detailed documentation for each playbook:**
+
+| Playbook | Doc |
+|----------|-----|
+| `auto-schedule.yaml` | [auto-schedule.md](auto-schedule.md) |
+| `setup.yaml` | [setup.md](setup.md) |
+| `setup_EL9.yaml` | [setup_EL9.md](setup_EL9.md) |
+| `test.yaml` | This document |
+| `site.yml` | [site.md](site.md) |
+| `cleanup.yaml` | [cleanup.md](cleanup.md) |
+| `scalelab-cleanup.yaml` | [scalelab-cleanup.md](scalelab-cleanup.md) |
 
 ---
 
@@ -186,17 +201,27 @@ Run this between test.yaml invocations so each benchmark starts from a clean, co
 ## Quick Reference
 
 ```bash
+# (Optional) Reserve ScaleLab hosts:
+ansible-playbook playbooks/auto-schedule.yaml -e "workload_name='DB-CPT RHEL 10'"
+
 # First time only (installs everything):
 ansible-playbook playbooks/setup.yaml
 
-# Run a benchmark:
+# Run a benchmark (test only):
 ansible-playbook playbooks/test.yaml
 
+# Run full pipeline (test + master JSON):
+ansible-playbook playbooks/site.yml
+
 # Override virtual users:
-ansible-playbook playbooks/test.yaml -e hammerdb_virtual_users=112
+ansible-playbook playbooks/site.yml -e hammerdb_virtual_users=112
 
 # Clean up between runs:
 ansible-playbook playbooks/cleanup.yaml
+
+# Release ScaleLab hosts when done:
+ansible-playbook playbooks/scalelab-cleanup.yaml
 ```
 
 Results land in `results/<timestamp>-benchmark-report.json`.
+Master JSON (from `site.yml`) lands in `results/<timestamp>-master.json`.
