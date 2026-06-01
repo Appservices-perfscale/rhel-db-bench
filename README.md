@@ -82,6 +82,7 @@ ansible-playbook playbooks/scalelab-cleanup.yaml
 | Document | Description |
 |----------|-------------|
 | [docs/auto-schedule.md](docs/auto-schedule.md) | Reserve ScaleLab hosts via QUADS API |
+| [docs/os-setup.md](docs/os-setup.md) | Pin RHEL compose, distro-sync, reboot |
 | [docs/setup.md](docs/setup.md) | One-time provisioning (bench + client) |
 | [docs/setup_EL9.md](docs/setup_EL9.md) | RHEL 9.0 setup with PGDG workaround |
 | [docs/test-logic.md](docs/test-logic.md) | Benchmark flow, PostgreSQL tuning rationale, PCP metrics |
