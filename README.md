@@ -3,30 +3,6 @@
 **Database Competitive Performance Testing** — an Ansible-driven PostgreSQL
 TPC-C benchmark framework for comparing RHEL releases on bare-metal hardware.
 
-```
-                 ┌────────────────────────────────────────────┐
-                 │              Same rack (ToR switch)        │
-                 │                                            │
-                 │   ┌──────────────┐    ┌──────────────┐    │
-                 │   │  bench-vm    │    │  client-vm   │    │
-                 │   │              │    │              │    │
-                 │   │  PostgreSQL  │◀───│  HammerDB    │    │
-                 │   │  (SUT)       │    │  (Podman)    │    │
-                 │   │  + PCP       │    │  + PCP       │    │
-                 │   └──────────────┘    └──────────────┘    │
-                 │                                            │
-                 └────────────────────────────────────────────┘
-                                     │
-                                     ▼
-                            ┌──────────────┐
-                            │  Controller  │
-                            │  (your       │
-                            │   laptop)    │
-                            │              │
-                            │  results/    │
-                            │  *.json      │
-                            └──────────────┘
-```
 
 Two bare-metal hosts run on the **same rack** to eliminate network variability.
 The **bench** host runs PostgreSQL (the system under test), and the **client**
@@ -71,31 +47,31 @@ ansible-playbook playbooks/scalelab-cleanup.yaml
 
 ```
   ┌──────────────────┐
-  │ auto-schedule     │  Reserve ScaleLab hosts (optional)
-  │     .yaml         │  Writes inventory.local.ini + scalelab_assignment.yml
+  │ auto-schedule    │  Reserve ScaleLab hosts (optional)
+  │     .yaml        │  Writes inventory.local.ini + scalelab_assignment.yml
   └────────┬─────────┘
            ▼
   ┌──────────────────┐
-  │ os-setup.yaml     │  Pin RHEL compose, distro-sync, reboot
+  │ os-setup.yaml    │  Pin RHEL compose, distro-sync, reboot
   └────────┬─────────┘
            ▼
   ┌──────────────────┐
-  │ setup.yaml        │  Install PostgreSQL, HammerDB, PCP, kernel tuning
-  │ (or setup_EL9)    │  (one-time)
+  │ setup.yaml       │  Install PostgreSQL, HammerDB, PCP, kernel tuning
+  │ (or setup_EL9)   │  (one-time)
   └────────┬─────────┘
            ▼
   ┌══════════════════╗
-  ║ site.yml          ║  Benchmark + artifact assembly
-  ║ (or test.yaml)    ║  Produces results/*.json + *.log
+  ║ site.yml         ║  Benchmark + artifact assembly
+  ║ (or test.yaml)   ║  Produces results/*.json + *.log
   ╚════════╤═════════╝
            ▼                    ◀── repeat as needed
   ┌──────────────────┐              with cleanup in between
-  │ cleanup.yaml      │  Reset database, caches, PCP state
+  │ cleanup.yaml     │  Reset database, caches, PCP state
   └────────┬─────────┘
            ▼
   ┌──────────────────┐
-  │ scalelab-cleanup  │  Release ScaleLab hosts
-  │     .yaml         │
+  │ scalelab-cleanup │  Release ScaleLab hosts
+  │     .yaml        │
   └──────────────────┘
 ```
 

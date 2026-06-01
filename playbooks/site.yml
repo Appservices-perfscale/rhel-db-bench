@@ -33,7 +33,10 @@
     bench_metrics_log: "{{ hostvars['localhost']['_test_bench_metrics_log'] | default('') }}"
     client_metrics_log: "{{ hostvars['localhost']['_test_client_metrics_log'] | default('') }}"
     master_json_path: "{{ results_dir }}/{{ run_id }}-master.json"
-    facts_dir: "{{ results_dir }}/os-prep"
+    facts_dir: >-
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/os-prep' }}
   tasks:
     - name: Locate facts.json files from os-prep
       ansible.builtin.find:

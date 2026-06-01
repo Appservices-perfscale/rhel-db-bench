@@ -23,6 +23,15 @@
 #   <stamp>-benchmark-report.json, <stamp>-bench-metrics-samples.log (bench),
 #   <stamp>-client-metrics-samples.log (load generator), etc.
 
+- name: Gather bench OS version for results directory naming
+  hosts: bench
+  gather_facts: true
+  tasks:
+    - name: Persist OS version tag from gathered facts
+      ansible.builtin.set_fact:
+        _os_version_tag: >-
+          {{ (ansible_distribution | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_distribution_version }}
+
 - name: Run HammerDB / site.yml matrix over virtual users and repeat count
   hosts: localhost
   connection: local
@@ -34,8 +43,11 @@
     matrix_cleanup_between_runs: true
     project_root: "{{ playbook_dir ~ '/..' }}"
     matrix_inventory: "{{ matrix_inventory_override | default(project_root ~ '/inventory.ini') }}"
+    _bench: "{{ groups['bench'][0] }}"
+    _os_version_tag: "{{ hostvars[_bench]['_os_version_tag'] }}"
     results_dir: "{{ project_root }}/{{ matrix_results_subdir | default('results') }}"
-    archive_dir: "{{ results_dir }}/archive"
+    os_results_dir: "{{ results_dir }}/{{ _os_version_tag }}"
+    archive_dir: "{{ os_results_dir }}/archive"
 
   tasks:
     - name: Ensure results and archive directories exist
@@ -44,7 +56,7 @@
         state: directory
         mode: "0755"
       loop:
-        - "{{ results_dir }}"
+        - "{{ os_results_dir }}"
         - "{{ archive_dir }}"
 
     - name: Build inventory arguments once
@@ -66,7 +78,7 @@
         LOGFILE="${INSTANCE_SAFE}.log"
         ARCHIVE_SUBDIR="{{ archive_dir }}/${INSTANCE_SAFE}"
 
-        mkdir -p "{{ results_dir }}" "${ARCHIVE_SUBDIR}"
+        mkdir -p "{{ os_results_dir }}" "${ARCHIVE_SUBDIR}"
 
         {
           echo "========== Matrix: VU=${VU} repeat=${RUN} stamp=${RUN_TS} =========="
@@ -91,16 +103,16 @@
             -e "perf_run_stamp=${RUN_TS}"
 
           for f in \
-            "{{ results_dir }}/${RUN_TS}-benchmark-report.json" \
-            "{{ results_dir }}/${RUN_TS}-results.json" \
-            "{{ results_dir }}/${RUN_TS}-monitoring.json" \
-            "{{ results_dir }}/${RUN_TS}-master.json" \
-            "{{ results_dir }}/${RUN_TS}-bench-metrics-samples.log" \
-            "{{ results_dir }}/${RUN_TS}-client-metrics-samples.log"; do
+            "{{ os_results_dir }}/${RUN_TS}-benchmark-report.json" \
+            "{{ os_results_dir }}/${RUN_TS}-results.json" \
+            "{{ os_results_dir }}/${RUN_TS}-monitoring.json" \
+            "{{ os_results_dir }}/${RUN_TS}-master.json" \
+            "{{ os_results_dir }}/${RUN_TS}-bench-metrics-samples.log" \
+            "{{ os_results_dir }}/${RUN_TS}-client-metrics-samples.log"; do
             [ -f "$f" ] && cp -f "$f" "${ARCHIVE_SUBDIR}/" || true
           done
-        } 2>&1 | tee "{{ results_dir }}/${LOGFILE}"
-        cp -f "{{ results_dir }}/${LOGFILE}" "${ARCHIVE_SUBDIR}/" || true
+        } 2>&1 | tee "{{ os_results_dir }}/${LOGFILE}"
+        cp -f "{{ os_results_dir }}/${LOGFILE}" "${ARCHIVE_SUBDIR}/" || true
         exit "${PIPESTATUS[0]}"
       args:
         executable: /bin/bash
@@ -116,7 +128,7 @@
           Completed {{ matrix_run.results | default([]) | rejectattr('failed') | list | length }}
           of {{ matrix_run.results | default([]) | length }} runs.
           Cleanup between runs: {{ matrix_cleanup_between_runs | bool }}.
-          Results in {{ results_dir }}, archives in {{ archive_dir }}.
+          Results in {{ os_results_dir }}, archives in {{ archive_dir }}.
 
     - name: Show failed matrix runs (if any)
       ansible.builtin.debug:

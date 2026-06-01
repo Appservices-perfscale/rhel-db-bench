@@ -13,9 +13,12 @@
   vars:
     ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
     _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
+    _os_version_tag: >-
+      {{ (ansible_distribution | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_distribution_version }}
     _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/' ~ _os_version_tag }}
     _benchmark_run_id: >-
       {{
         (perf_run_stamp | default('') | string | trim)
@@ -36,9 +39,10 @@
       - disk.all.write
   tasks:
     # Play vars are not reliably visible via hostvars to later plays; persist for the report play on localhost.
-    - name: Persist benchmark run id on bench host for controller report
+    - name: Persist benchmark run id and OS version tag on bench host
       ansible.builtin.set_fact:
         _benchmark_run_id: "{{ _benchmark_run_id }}"
+        _os_version_tag: "{{ _os_version_tag }}"
 
     - name: Ensure PostgreSQL is running (from setup.yaml)
       ansible.builtin.systemd:
@@ -105,9 +109,11 @@
     pgsql_benchmark_user: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_user'] }}"
     pgsql_benchmark_password: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_password'] }}"
     pgsql_benchmark_db: "{{ hostvars[_bench_inventory_name]['pgsql_benchmark_db'] }}"
+    _os_version_tag: "{{ hostvars[_bench_inventory_name]['_os_version_tag'] }}"
     _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/' ~ _os_version_tag }}
     _benchmark_run_id: "{{ hostvars[_bench_inventory_name]['_benchmark_run_id'] }}"
     _client_metrics_samples_basename: "{{ _benchmark_run_id }}-client-metrics-samples.log"
     _client_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _client_metrics_samples_basename }}"
@@ -226,9 +232,11 @@
   vars:
     ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
     _bench_inventory_name: "{{ groups['bench'][0] }}"
+    _os_version_tag: "{{ hostvars[_bench_inventory_name]['_os_version_tag'] }}"
     _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/' ~ _os_version_tag }}
     _benchmark_run_id: "{{ hostvars[_bench_inventory_name]['_benchmark_run_id'] }}"
     _client_metrics_samples_basename: "{{ _benchmark_run_id }}-client-metrics-samples.log"
     _client_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _client_metrics_samples_basename }}"
@@ -313,9 +321,11 @@
   hosts: bench
   gather_facts: false
   vars:
+    _os_version_tag: "{{ hostvars[inventory_hostname]['_os_version_tag'] }}"
     _benchmark_results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/' ~ _os_version_tag }}
     _benchmark_run_id: "{{ hostvars[inventory_hostname]['_benchmark_run_id'] }}"
     _bench_metrics_samples_basename: "{{ _benchmark_run_id }}-bench-metrics-samples.log"
     _bench_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _bench_metrics_samples_basename }}"
@@ -354,11 +364,13 @@
   gather_facts: false
   become: false
   vars:
-    results_dir: >-
-      {{ (perf_results_path | default('') | string | trim | length > 0)
-      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results') }}
     _bench: "{{ groups['bench'][0] }}"
     _client: "{{ groups['client'][0] }}"
+    _os_version_tag: "{{ hostvars[_bench]['_os_version_tag'] | default('unknown') }}"
+    results_dir: >-
+      {{ ((perf_results_path | default('') | string | trim | length > 0)
+      | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
+      ~ '/' ~ _os_version_tag }}
     _bv: "{{ hostvars[_bench] }}"
     _cv: "{{ hostvars[_client] }}"
     benchmark_run_id: "{{ _bv['_benchmark_run_id'] | string }}"
