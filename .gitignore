@@ -10,3 +10,7 @@ inventory.local.ini
 quads_cfg.yaml
 scalelab_assignment.yml
 
+# CPT automation — generated at runtime
+state/
+inventory/generated/
+

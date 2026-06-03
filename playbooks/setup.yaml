@@ -19,8 +19,8 @@
       kernel.numa_balancing: "0"
     _pgsql_sysconfig: "/etc/sysconfig/postgresql-{{ postgresql_major }}"
     _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
-    _pgdg_el_major: "{{ postgresql_pgdg_el_major | default(ansible_distribution_major_version) | string }}"
-    _pgdg_repo_arch: "{{ 'x86_64' if ansible_architecture in ['x86_64', 'amd64'] else ansible_architecture }}"
+    _pgdg_el_major: "{{ postgresql_pgdg_el_major | default(ansible_facts['distribution_major_version']) | string }}"
+    _pgdg_repo_arch: "{{ 'x86_64' if ansible_facts['architecture'] in ['x86_64', 'amd64'] else ansible_facts['architecture'] }}"
     _pgdg_repo_rpm: >-
       https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ _pgdg_el_major }}-{{ _pgdg_repo_arch }}/pgdg-redhat-repo-latest.noarch.rpm
     pcp_pmdumptext_smoke_metrics:
@@ -126,7 +126,7 @@
       register: _pgdg_module_disable
       changed_when: "'Nothing to do' not in (_pgdg_module_disable.stdout | default(''))"
       failed_when: false
-      when: ansible_distribution_major_version | int < 10
+      when: ansible_facts['distribution_major_version'] | int < 10
 
     - name: Disable PGDG repos for PostgreSQL versions we do not use
       ansible.builtin.command: >-
@@ -190,7 +190,7 @@
         bench_pgsql_semanage.rc != 0
         and ('already defined' not in (bench_pgsql_semanage.stderr | default('')))
       when:
-        - ansible_selinux.status | default('disabled') == 'enabled'
+        - (ansible_facts['selinux'] | default({})).status | default('disabled') == 'enabled'
         - not (pgsql_data_dir is match('^/var/lib/pgsql/'))
 
     - name: Check whether PostgreSQL cluster is already initialized
@@ -224,7 +224,7 @@
       ansible.builtin.command: restorecon -Rv {{ pgsql_data_dir }}
       changed_when: false
       when:
-        - ansible_selinux.status | default('disabled') == 'enabled'
+        - (ansible_facts['selinux'] | default({})).status | default('disabled') == 'enabled'
         - not (pgsql_data_dir is match('^/var/lib/pgsql/'))
 
     - name: Enable and start PostgreSQL service

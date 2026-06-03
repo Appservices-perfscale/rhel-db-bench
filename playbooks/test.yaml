@@ -14,7 +14,7 @@
     ansible_become_timeout: "{{ ansible_become_timeout | default(300) }}"
     _pgsql_connect_host: "{{ pgsql_admin_connect_host | default('127.0.0.1') }}"
     _os_version_tag: >-
-      {{ (ansible_distribution | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_distribution_version }}
+      {{ (ansible_facts['distribution'] | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_facts['distribution_version'] }}
     _benchmark_results_dir: >-
       {{ ((perf_results_path | default('') | string | trim | length > 0)
       | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
@@ -23,7 +23,7 @@
       {{
         (perf_run_stamp | default('') | string | trim)
         if (perf_run_stamp | default('') | string | trim | length) > 0
-        else (ansible_date_time.date | replace('-', '')) ~ '-' ~ (ansible_date_time.time | replace(':', ''))
+        else (ansible_facts['date_time'].date | replace('-', '')) ~ '-' ~ (ansible_facts['date_time'].time | replace(':', ''))
       }}
     _bench_metrics_samples_basename: "{{ _benchmark_run_id }}-bench-metrics-samples.log"
     _bench_metrics_samples_remote_path: "{{ hammerdb_remote_workdir }}/{{ _bench_metrics_samples_basename }}"
@@ -397,15 +397,15 @@
             ansible_host: "{{ _bv['ansible_host'] | default('') }}"
             rhel_release_id: "{{ _bv.get('os_prep_rhel_release_id', '') | string }}"
             os_prep_release_root: "{{ _bv.get('os_prep_rhel_release_root', '') | string }}"
-            distribution: "{{ _bv.get('ansible_distribution', '') | string }} {{ _bv.get('ansible_distribution_version', '') | string }}"
-            kernel: "{{ _bv.get('ansible_kernel', '') | string }}"
+            distribution: "{{ (_bv.get('ansible_facts', {}) | default({})).get('distribution', '') | string }} {{ (_bv.get('ansible_facts', {}) | default({})).get('distribution_version', '') | string }}"
+            kernel: "{{ (_bv.get('ansible_facts', {}) | default({})).get('kernel', '') | string }}"
           client:
             inventory_hostname: "{{ _cv['inventory_hostname'] }}"
             ansible_host: "{{ _cv['ansible_host'] | default('') }}"
             rhel_release_id: "{{ _cv.get('os_prep_rhel_release_id', '') | string }}"
             os_prep_release_root: "{{ _cv.get('os_prep_rhel_release_root', '') | string }}"
-            distribution: "{{ _cv.get('ansible_distribution', '') | string }} {{ _cv.get('ansible_distribution_version', '') | string }}"
-            kernel: "{{ _cv.get('ansible_kernel', '') | string }}"
+            distribution: "{{ (_cv.get('ansible_facts', {}) | default({})).get('distribution', '') | string }} {{ (_cv.get('ansible_facts', {}) | default({})).get('distribution_version', '') | string }}"
+            kernel: "{{ (_cv.get('ansible_facts', {}) | default({})).get('kernel', '') | string }}"
           postgresql:
             data_directory: "{{ _bv['pgsql_data_dir'] | default('') }}"
             service: "{{ _bv['postgresql_service_name'] | default('') }}"

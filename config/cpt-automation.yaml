@@ -1,0 +1,36 @@
+---
+# CPT automation policy.
+# Fully dynamic — no hardcoded versions or watch lists.
+# The watcher auto-discovers RHEL releases by scanning compose mirror directory listings.
+
+compose_mirror:
+  # Directory listing URL pattern.  {major} is substituted at runtime.
+  # The watcher fetches this page and parses GA symlinks:
+  #   RHEL 9:  latest-RHEL-9.0.0/   (three-part)
+  #   RHEL 10+: latest-RHEL-10.0/  (two-part)
+  dir_url_template: "https://download.eng.pnq.redhat.com/rhel-{major}/rel-eng/RHEL-{major}/"
+
+  # Compose root URL pattern (resolved after discovery).
+  # {major} and {minor_tag} are substituted at runtime.
+  compose_url_template: "https://download.eng.pnq.redhat.com/rhel-{major}/rel-eng/RHEL-{major}/latest-RHEL-{minor_tag}"
+
+  # Start scanning from this major and keep incrementing until a mirror 404s.
+  # e.g. scan_from: 9  →  tries rhel-9, rhel-10, rhel-11, ... stops at first miss.
+  scan_from_major: 9
+
+foreman:
+  # QUADS os_list endpoint — queried to pick the best ostype for cross-major wipe.
+  os_list_url: "https://quads2.rdu2.scalelab.redhat.com/api/v3/hosts/os_list"
+
+client:
+  # Client OS is pinned — never changed by automation.
+  # These values live in inventory.ini [client:vars] and are never overridden.
+  fixed_release_id: "9.4"
+  fixed_release_root: "https://download.eng.pnq.redhat.com/rhel-9/rel-eng/RHEL-9/latest-RHEL-9.4.0"
+
+reinstall:
+  # Only wipe + ostype when the target bench major differs from the current host major.
+  wipe_on_major_change: true
+
+state_file: "state/last-tested.json"
+generated_inventory: "inventory/generated/rhel-ga.ini"

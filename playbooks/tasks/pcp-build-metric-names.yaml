@@ -20,8 +20,8 @@
         (pcp_network_interface_instances | default([]))
         if (pcp_network_interface_instances | default([]) | length) > 0
         else (
-          [ansible_default_ipv4.interface]
-          if ansible_default_ipv4 is defined and ansible_default_ipv4.interface is defined
+          [ansible_facts['default_ipv4'].interface]
+          if ansible_facts['default_ipv4'] is defined and ansible_facts['default_ipv4'].interface is defined
           else []
         )
       }}

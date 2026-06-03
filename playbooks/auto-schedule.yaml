@@ -7,6 +7,8 @@
 # Optional:
 #   -e num_hosts=2          (default: 2)
 #   -e schedule_servers=host1.example.com,host2.example.com  (pin exact hostnames)
+#   -e quads_ostype="RHEL 10.0"  (Foreman OS for cross-major reinstall; omit for same-major)
+#   -e quads_wipe=true            (force Foreman wipe; defaults to true)
 #
 # Host class: set preferred_models in quads_cfg.yaml (list, e.g. [r650]) or "all" for any model.
 # Same-rack only: bench + client must share a rack prefix (e.g. f24-h07 + f24-h08, not f24 + f27).
@@ -23,7 +25,7 @@
 
   vars:
     num_hosts: 2
-    wipe: "true"
+    wipe: "{{ quads_wipe | default('true') }}"
     qinq: 0
     project_root: "{{ playbook_dir }}/.."
     inventory_local_path: "{{ project_root }}/inventory.local.ini"
@@ -375,6 +377,28 @@
           or pass -e schedule_servers=host1,host2 from one rack.
       changed_when: false
 
+    - name: Build self-schedule assignment payload
+      ansible.builtin.set_fact:
+        _assignment_body: >-
+          {{
+            {
+              'description': workload_name,
+              'owner': quads_username,
+              'qinq': qinq,
+              'wipe': wipe
+            } | combine(
+              {'ostype': quads_ostype}
+              if (quads_ostype | default('') | trim | length > 0)
+              else {}
+            )
+          }}
+      changed_when: false
+
+    - name: Show assignment payload (ostype included when cross-major)
+      ansible.builtin.debug:
+        msg: "Assignment body: {{ _assignment_body }}"
+      changed_when: false
+
     - name: Create self-schedule assignment
       ansible.builtin.uri:
         url: "{{ base_api_url }}/assignments/self"
@@ -382,11 +406,7 @@
         headers:
           Authorization: "Bearer {{ quads_token }}"
         body_format: json
-        body:
-          description: "{{ workload_name }}"
-          owner: "{{ quads_username }}"
-          qinq: "{{ qinq }}"
-          wipe: "{{ wipe }}"
+        body: "{{ _assignment_body }}"
         validate_certs: false
         status_code: [201, 403]
       register: assignment_creation_result

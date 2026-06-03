@@ -30,7 +30,7 @@
     - name: Persist OS version tag from gathered facts
       ansible.builtin.set_fact:
         _os_version_tag: >-
-          {{ (ansible_distribution | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_distribution_version }}
+          {{ (ansible_facts['distribution'] | replace('RedHat', 'RHEL')) ~ '_' ~ ansible_facts['distribution_version'] }}
 
 - name: Run HammerDB / site.yml matrix over virtual users and repeat count
   hosts: localhost

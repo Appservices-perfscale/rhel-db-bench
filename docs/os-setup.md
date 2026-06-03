@@ -23,38 +23,6 @@ ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini
 
 ---
 
-## Why this playbook exists
-
-Competitive performance testing compares NOPM across RHEL releases. For those
-comparisons to be valid, the OS on each host must be pinned to an **exact
-compose** — not whatever the provisioning system happened to install:
-
-```
-  Without os-setup                    With os-setup
-  ──────────────────                  ──────────────────
-  Host provisioned with               Host provisioned with
-  whatever RHEL is current             whatever RHEL is current
-          │                                    │
-          ▼                                    ▼
-  setup.yaml runs on                   os-setup.yaml pins
-  an unknown minor release             to RHEL 9.7 nightly 2025-05-12
-          │                                    │
-          ▼                                    ▼
-  Benchmark results are                setup.yaml runs on
-  tied to an uncontrolled OS           a known, reproducible OS
-          │                                    │
-          ▼                                    ▼
-  ✗ Not comparable                     ✓ Comparable across runs
-    across runs
-```
-
-The playbook also removes third-party packages (PostgreSQL, PGDG, PCP) that
-the provisioning system may have installed from different repos. These would
-conflict with `distro-sync` against the target compose and would be
-reinstalled by `setup.yaml` anyway.
-
----
-
 ## What the playbook does
 
 The playbook contains two plays, both targeting `[remote]` (bench + client).
@@ -68,8 +36,8 @@ same time.
   │                       remote host                                 │
   │                                                                   │
   │   1. Check skip flag (os_prep_enable) ──────┐                     │
-  │                                              │ skip if false      │
-  │   2. Validate required variables ◄───────────┘                    │
+  │                                             │ skip if false       │
+  │   2. Validate required variables ◄──────────┘                     │
   │          │                                                        │
   │          ▼                                                        │
   │   3. Show target compose URL + expected release ID                │
@@ -81,7 +49,7 @@ same time.
   │   5. Template BaseOS + AppStream repos pointing at compose        │
   │          │                                                        │
   │          ▼                                                        │
-  │   6. Pin DNF releasever to target minor (e.g. 9.7)               │
+  │   6. Pin DNF releasever to target minor (e.g. 9.7)                │
   │          │                                                        │
   │          ▼                                                        │
   │   7. dnf clean all                                                │
@@ -90,7 +58,7 @@ same time.
   │   8. Stop PostgreSQL + PCP services                               │
   │          │                                                        │
   │          ▼                                                        │
-  │   9. Remove PostgreSQL, PGDG, PCP packages                       │
+  │   9. Remove PostgreSQL, PGDG, PCP packages                        │
   │          │                                                        │
   │          ▼                                                        │
   │  10. dnf distro-sync --allowerasing                               │
@@ -127,22 +95,22 @@ same time.
 
 ```
   ┌──────────────────────────────────────────────────────┐
-  │                    remote host                        │
-  │                                                       │
-  │   1. Check skip flag (os_prep_enable)                 │
-  │          │                                            │
-  │          ▼                                            │
-  │   2. Assert redhat-release after reboot               │
-  │          │                                            │
-  │          ▼                                            │
-  │   3. Assert Ansible sees correct RHEL major.minor     │
-  │          │                                            │
-  │          ▼                                            │
-  │   4. Print kernel + distribution version              │
-  │          │                                            │
-  │          ▼                                            │
-  │   5. Write facts.json to controller                   │
-  │                                                       │
+  │                    remote host                       │
+  │                                                      │
+  │   1. Check skip flag (os_prep_enable)                │
+  │          │                                           │
+  │          ▼                                           │
+  │   2. Assert redhat-release after reboot              │
+  │          │                                           │
+  │          ▼                                           │
+  │   3. Assert Ansible sees correct RHEL major.minor    │
+  │          │                                           │
+  │          ▼                                           │
+  │   4. Print kernel + distribution version             │
+  │          │                                           │
+  │          ▼                                           │
+  │   5. Write facts.json to controller                  │
+  │                                                      │
   └──────────────────────────────────────────────────────┘
 ```
 
@@ -179,8 +147,8 @@ Per-group variables live in `inventory.ini` under `[bench:vars]` and
 
 ```
   ┌─────────────────┐     ┌──────────────┐     ┌──────────────┐
-  │ auto-schedule    │────▶│ os-setup     │────▶│ setup.yaml   │──▶ ...
-  │ .yaml (optional) │     │ .yaml        │     │              │
+  │ auto-schedule   │───▶│ os-setup     │───▶│ setup.yaml   │──▶ ...
+  │ .yaml (optional)│     │ .yaml        │     │              │
   └─────────────────┘     └──────────────┘     └──────────────┘
    Reserve hosts           Pin RHEL build       Install PostgreSQL,
                            + reboot             HammerDB, PCP

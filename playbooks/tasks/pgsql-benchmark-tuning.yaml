@@ -13,7 +13,7 @@
     - pgsql_benchmark_low_variance_tune | default(false) | bool
     - _pgsql_manual_shared_buffers | length == 0 or _pgsql_manual_effective_cache | length == 0
   ansible.builtin.set_fact:
-    _pgsql_bench_ram_mb: "{{ ansible_memtotal_mb | default(0) | int }}"
+    _pgsql_bench_ram_mb: "{{ ansible_facts['memtotal_mb'] | default(0) | int }}"
     _pgsql_os_reserve_mb: "{{ pgsql_tune_os_reserve_mb | default(8192) | int }}"
   changed_when: false
 
