@@ -5,7 +5,7 @@
 //
 // The generated job points at jenkins/DB-CPT-RHEL.groovy in the same repo.
 
-def gitRepo   = 'https://gitlab.cee.redhat.com/redhat-performance/DB-CPT-RHEL.git'
+def gitRepo   = 'https://github.com/kmagar25/rhel-db-bench.git'
 def gitBranch = 'main'
 
 pipelineJob('DB-CPT-RHEL') {
@@ -47,7 +47,7 @@ pipelineJob('DB-CPT-RHEL') {
                 git {
                     remote {
                         url(gitRepo)
-                        credentials('gitlab-cee-token')
+                        credentials('github-token')
                     }
                     branches(gitBranch)
                 }

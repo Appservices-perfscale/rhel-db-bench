@@ -5,7 +5,9 @@
 //
 // Required credentials (Jenkins → Manage Credentials):
 //   PGPASSWORD  — Secret text; PostgreSQL password for pass_or_fail + upload.
-//   SSH_KEY     — SSH private key for Ansible to reach bench/client hosts.
+//   PG_HOST     — Secret text; PostgreSQL host (e.g. 10.1.170.11).
+//   PG_DATABASE — Secret text; PostgreSQL database name (e.g. freebusy).
+//   PG_USER     — Secret text; PostgreSQL username (e.g. freebusy).
 
 pipeline {
     agent { label params.JENKINS_AGENT ?: 'perf-controller' }
@@ -48,9 +50,12 @@ pipeline {
     }
 
     environment {
-        PGPASSWORD         = credentials('PGPASSWORD')
-        CPT_ARTIFACT_ROOT  = "${env.WORKSPACE}/ARTIFACTS/DB-CPT-RHEL"
-        ANSIBLE_FORCE_COLOR = '1'
+        PGPASSWORD              = credentials('PGPASSWORD')
+        PG_HOST                 = credentials('PG_HOST')
+        PG_DATABASE             = credentials('PG_DATABASE')
+        PG_USER                 = credentials('PG_USER')
+        CPT_ARTIFACT_ROOT       = "${env.WORKSPACE}/ARTIFACTS/DB-CPT-RHEL"
+        ANSIBLE_FORCE_COLOR     = '1'
         ANSIBLE_STDOUT_CALLBACK = 'yaml'
     }
 
@@ -79,12 +84,20 @@ pipeline {
         stage('Prepare configs') {
             steps {
                 sh '''
-                    if [ ! -f pass_or_fail_cfg.yaml ]; then
-                        cp pass_or_fail_cfg.yaml.example pass_or_fail_cfg.yaml
-                    fi
-                    if [ ! -f archive_cfg.yaml ]; then
-                        cp archive_cfg.yaml.example archive_cfg.yaml
-                    fi
+                    cp pass_or_fail_cfg.yaml.example pass_or_fail_cfg.yaml
+                    sed -i "s/db\\.example\\.com/$PG_HOST/g"  pass_or_fail_cfg.yaml
+                    sed -i "s/perf_results/$PG_DATABASE/g"    pass_or_fail_cfg.yaml
+                    sed -i "s/reader/$PG_USER/g"              pass_or_fail_cfg.yaml
+
+                    cp archive_cfg.yaml.example archive_cfg.yaml
+                    sed -i "s/db\\.example\\.com/$PG_HOST/g"  archive_cfg.yaml
+                    sed -i "s/perf_results/$PG_DATABASE/g"    archive_cfg.yaml
+                    sed -i "s/writer/$PG_USER/g"              archive_cfg.yaml
+
+                    echo "--- pass_or_fail_cfg.yaml (injected) ---"
+                    grep -E 'pg_host|pg_database|pg_user|^  host:|^  database:|^  user:' pass_or_fail_cfg.yaml || true
+                    echo "--- archive_cfg.yaml (injected) ---"
+                    grep -E 'host:|database:|user:' archive_cfg.yaml || true
                 '''
             }
         }
