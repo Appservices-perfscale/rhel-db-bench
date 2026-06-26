@@ -29,14 +29,25 @@
       ansible.builtin.meta: end_host
       when: not (os_prep_enable | default(true) | bool)
 
-    - name: Require os_prep_rhel_release_root for this host
+    - name: Require os_prep_rhel_release_root_prefix for this host
+      ansible.builtin.assert:
+        that:
+          - os_prep_rhel_release_root_prefix is defined
+          - os_prep_rhel_release_root_prefix | string | trim | length > 0
+        fail_msg: >-
+          Set os_prep_rhel_release_root_prefix under [remote:vars] in inventory.ini
+          (compose URL is derived from os_prep_rhel_release_id unless
+          os_prep_rhel_release_root_override is set).
+      changed_when: false
+
+    - name: Require derived os_prep_rhel_release_root for this host
       ansible.builtin.assert:
         that:
           - os_prep_rhel_release_root is defined
           - os_prep_rhel_release_root | string | trim | length > 0
         fail_msg: >-
-          Set os_prep_rhel_release_root (and os_prep_rhel_release_id) in inventory for
-          {{ inventory_hostname }} — see [bench:vars] / [client:vars] in inventory.ini.
+          Could not derive os_prep_rhel_release_root for {{ inventory_hostname }}.
+          Set os_prep_rhel_release_id (e.g. 9.4) or os_prep_rhel_release_root_override.
       changed_when: false
 
     - name: Require os_prep_rhel_release_id for this host
@@ -45,7 +56,9 @@
           - os_prep_rhel_release_id is defined
           - os_prep_rhel_release_id | string | trim | length > 0
         fail_msg: >-
-          Set os_prep_rhel_release_id for {{ inventory_hostname }} (e.g. 9.7).
+          Set os_prep_rhel_release_id for {{ inventory_hostname }}.
+          Bench: bench_rhel_release_id_default in inventory or -e bench_rhel_release_id=9.4.
+          Client: os_prep_rhel_release_id in [client:vars].
       changed_when: false
 
     - name: Show OS prep target for this host
@@ -181,19 +194,19 @@
     - name: Confirm Ansible sees the expected RHEL major.minor
       ansible.builtin.assert:
         that:
-          - ansible_os_family == 'RedHat'
-          - os_prep_rhel_release_id | string in ansible_distribution_version
+          - ansible_facts['os_family'] == 'RedHat'
+          - os_prep_rhel_release_id | string in ansible_facts['distribution_version']
         fail_msg: >-
-          ansible_distribution={{ ansible_distribution | default('unknown') }}
-          {{ ansible_distribution_version | default('') }};
+          ansible_distribution={{ ansible_facts['distribution'] | default('unknown') }}
+          {{ ansible_facts['distribution_version'] | default('') }};
           expected release id {{ os_prep_rhel_release_id }}.
       changed_when: false
 
     - name: Show kernel after OS prep
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }}: kernel {{ ansible_kernel }},
-          {{ ansible_distribution }} {{ ansible_distribution_version }}
+          {{ inventory_hostname }}: kernel {{ ansible_facts['kernel'] }},
+          {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
 
     - name: Ensure local facts output directory exists
       ansible.builtin.file:

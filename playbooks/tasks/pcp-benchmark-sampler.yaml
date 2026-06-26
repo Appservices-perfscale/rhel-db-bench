@@ -46,7 +46,7 @@
       echo "pmdumptext not found — run playbooks/setup.yaml first (pcp-gui / pcp-system-tools)" >&2
       exit 1
     fi
-    nohup "$PMDUMP" -t {{ pcp_sample_interval_sec | default(5) | int }} \
+    nohup "$PMDUMP" -t {{ pcp_sample_interval_sec | default(4) | int }} \
       {{ _metrics_pmdumptext_names | map('quote') | join(' ') }} \
       > "{{ _metrics_samples_remote_path }}" 2>&1 &
     echo $! > "{{ _metrics_pmdumptext_pidfile }}"

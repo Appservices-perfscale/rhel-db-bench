@@ -1,8 +1,0 @@
----
-# Normalize inventory.ini comma-separated or JSON list for PCP disk.dev metrics.
-_pcp_disk_dev_list: >-
-  {{
-    (pcp_disk_dev_instances | string | split(',') | map('trim') | reject('equalto', '') | list)
-    if (pcp_disk_dev_instances is string)
-    else (pcp_disk_dev_instances | default([]) | list)
-  }}

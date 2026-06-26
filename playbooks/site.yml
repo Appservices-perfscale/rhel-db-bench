@@ -13,6 +13,17 @@
 #   <run_id>-bench-metrics-samples.log  — raw PCP data (bench)
 #   <run_id>-client-metrics-samples.log — raw PCP data (client)
 #   <run_id>-master.json             — combined master with facts + results + monitoring
+#                                    (includes OPL status-data fields: name, result)
+#
+# When pass_or_fail_cfg.yaml exists at the project root (copy from .example):
+#   pass_or_fail runs against PostgreSQL history, sets result on master.json.
+#   Use -e cpt_establish_baseline=true to seed a baseline (see docs/cpt-developer.md).
+# When archive_cfg.yaml exists (copy from .example):
+#   master.json is uploaded to db_cpt_rhel_data (id, datetime, data JSONB).
+# Run artifacts (logs + JSON) are copied to file storage when a root is configured via
+#   CPT_ARTIFACT_ROOT (Jenkins: e.g. /workspace/ARTIFACTS/DB-CPT-RHEL) or
+#   artifact_storage.root in archive_cfg.yaml (CPT_ARTIFACT_ROOT wins when set).
+# Requires: pip install opl pass_or_fail.py, psycopg2-binary, jq; export PGPASSWORD.
 
 # ── Phase 1: Run the benchmark (HammerDB + PCP collection + report) ──
 - import_playbook: test.yaml
@@ -33,6 +44,17 @@
     bench_metrics_log: "{{ hostvars['localhost']['_test_bench_metrics_log'] | default('') }}"
     client_metrics_log: "{{ hostvars['localhost']['_test_client_metrics_log'] | default('') }}"
     master_json_path: "{{ results_dir }}/{{ run_id }}-master.json"
+    status_data_name: DB-CPT-RHEL
+    pass_or_fail_cfg_path: "{{ playbook_dir }}/../pass_or_fail_cfg.yaml"
+    archive_cfg_path: "{{ playbook_dir }}/../archive_cfg.yaml"
+    # Developer CPT profile (optional extra vars; see docs/cpt-developer.md):
+    #   -e cpt_establish_baseline=true   — seed baseline, skip regression check, result=PASS
+    #   -e cpt_hardware_profile=r650     — tag runs (r640, r650, …) for pass_or_fail history matching
+    #   -e cpt_profile_label=staging     — optional free-form cohort label
+    cpt_establish_baseline: false
+    cpt_hardware_profile: ""
+    cpt_profile_label: ""
+    benchmark_report_path: "{{ hostvars['localhost']['_test_benchmark_report_path'] | default(results_dir ~ '/' ~ run_id ~ '-benchmark-report.json') }}"
     facts_dir: >-
       {{ ((perf_results_path | default('') | string | trim | length > 0)
       | ternary(perf_results_path | string | trim, playbook_dir ~ '/../results'))
@@ -110,15 +132,29 @@
 
         jq -n \
           --arg id "{{ _unique_id }}" \
+          --arg name "{{ status_data_name }}" \
           --arg started "{{ _started }}" \
           --arg ended "{{ _ended }}" \
+          --arg hw "{{ cpt_hardware_profile | default('') | trim }}" \
+          --arg label "{{ cpt_profile_label | default('') | trim }}" \
+          --argjson establish_baseline {{ 'true' if (cpt_establish_baseline | default(false) | bool) else 'false' }} \
           --slurpfile facts "$FACTS_FILE" \
           --slurpfile results "$RESULTS_JSON" \
           --slurpfile monitoring "$MONITORING_JSON" \
           '{
             id: $id,
+            name: $name,
             started: $started,
             ended: $ended,
+            result: null,
+            cpt_profile: ({
+              hardware: $hw,
+              label: $label,
+              establish_baseline_run: $establish_baseline
+            } | with_entries(select(
+              .key == "establish_baseline_run"
+              or (.value | type) == "string" and (.value | length) > 0
+            ))),
             facts: ($facts[0] // {}),
             results: ($results[0] // {}),
             monitoring: ($monitoring[0] // {})
@@ -132,6 +168,155 @@
         path: "{{ results_dir }}/.{{ run_id }}-facts-merged.json"
         state: absent
 
+    - name: Check for pass_or_fail config
+      ansible.builtin.stat:
+        path: "{{ pass_or_fail_cfg_path }}"
+      register: pass_or_fail_cfg_stat
+
+    - name: Load pass_or_fail config
+      ansible.builtin.include_vars:
+        file: "{{ pass_or_fail_cfg_path }}"
+        name: pof_cfg
+      when: pass_or_fail_cfg_stat.stat.exists
+
+    - name: Mark established baseline on master JSON
+      ansible.builtin.shell: |
+        set -euo pipefail
+        MASTER="{{ master_json_path }}"
+        tmp="$(mktemp)"
+        jq '.result = "PASS" | .cpt_profile.baseline = true' "$MASTER" > "$tmp"
+        mv "$tmp" "$MASTER"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: cpt_establish_baseline | default(false) | bool
+
+    - name: Run pass_or_fail regression check
+      ansible.builtin.command:
+        argv:
+          - pass_or_fail.py
+          - --config
+          - "{{ pass_or_fail_cfg_path }}"
+          - --current-file
+          - "{{ master_json_path }}"
+      environment:
+        PGPASSWORD: "{{ lookup('env', pof_cfg.history.pg_password_env_var | default('PGPASSWORD')) | default('', true) }}"
+      register: pass_or_fail_run
+      failed_when: false
+      changed_when: false
+      when:
+        - pass_or_fail_cfg_stat.stat.exists
+        - not (cpt_establish_baseline | default(false) | bool)
+
+    - name: Read result field from master JSON
+      ansible.builtin.command:
+        argv:
+          - jq
+          - -r
+          - ".result // \"null\""
+          - "{{ master_json_path }}"
+      register: master_result_field
+      changed_when: false
+      when:
+        - pass_or_fail_cfg_stat.stat.exists or (cpt_establish_baseline | default(false) | bool)
+
+    - name: Report pass_or_fail outcome
+      ansible.builtin.debug:
+        msg: >-
+          {% if cpt_establish_baseline | default(false) | bool %}
+          Baseline established: master.result={{ master_result_field.stdout | default('PASS') | trim }}
+          (regression check skipped; upload this run to seed history for the CPT profile).
+          {% else %}
+          pass_or_fail rc={{ pass_or_fail_run.rc | default('skipped') }},
+          master.result={{ master_result_field.stdout | trim }}.
+          {% if (master_result_field.stdout | trim) == 'null' %}
+          No comparison — empty history for this profile. Re-run with -e cpt_establish_baseline=true
+          (and matching -e cpt_hardware_profile / VU / label settings) to seed a baseline first.
+          {% endif %}
+          {% endif %}
+      when:
+        - pass_or_fail_cfg_stat.stat.exists or (cpt_establish_baseline | default(false) | bool)
+
+    - name: Check for archive config
+      ansible.builtin.stat:
+        path: "{{ archive_cfg_path }}"
+      register: archive_cfg_stat
+
+    - name: Load archive config
+      ansible.builtin.include_vars:
+        file: "{{ archive_cfg_path }}"
+        name: archive_cfg
+      when: archive_cfg_stat.stat.exists
+
+    - name: Resolve artifact storage root
+      ansible.builtin.set_fact:
+        _cpt_artifact_root: "{{ _resolved_root | trim }}"
+        _artifact_archive_enabled: "{{ _archive_enabled | bool }}"
+      vars:
+        _env_root: "{{ lookup('env', 'CPT_ARTIFACT_ROOT') | default('', true) | trim }}"
+        _cfg_root: >-
+          {{
+            archive_cfg.artifact_storage.root | default('') | string | trim
+            if (archive_cfg_stat.stat.exists and archive_cfg.artifact_storage is defined)
+            else ''
+          }}
+        _resolved_root: "{{ _env_root if (_env_root | length > 0) else _cfg_root }}"
+        _archive_enabled: >-
+          {{
+            (archive_cfg.artifact_storage.enabled | default(true))
+            if (archive_cfg_stat.stat.exists and archive_cfg.artifact_storage is defined)
+            else true
+          }}
+
+    - name: Archive run artifacts to file storage
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ARCHIVE="{{ _cpt_artifact_root }}/{{ run_id }}"
+        mkdir -p "$ARCHIVE"
+        for f in \
+          "{{ master_json_path }}" \
+          "{{ results_json }}" \
+          "{{ monitoring_json }}" \
+          "{{ benchmark_report_path }}" \
+          "{{ bench_metrics_log }}" \
+          "{{ client_metrics_log }}"; do
+          if [ -n "$f" ] && [ -f "$f" ]; then
+            cp -a "$f" "$ARCHIVE/"
+          fi
+        done
+        echo "$ARCHIVE"
+      args:
+        executable: /bin/bash
+      register: artifact_archive_run
+      changed_when: true
+      when:
+        - _cpt_artifact_root | length > 0
+        - _artifact_archive_enabled | bool
+
+    - name: Upload master JSON to PostgreSQL data table
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/upload_db_cpt_result.py"
+          - "{{ master_json_path }}"
+          - --host
+          - "{{ archive_cfg.postgresql.host }}"
+          - --port
+          - "{{ archive_cfg.postgresql.port | default(5432) }}"
+          - --database
+          - "{{ archive_cfg.postgresql.database }}"
+          - --user
+          - "{{ archive_cfg.postgresql.user }}"
+          - --table
+          - "{{ archive_cfg.postgresql.table | default('db_cpt_rhel_data') }}"
+          - --password-env
+          - "{{ archive_cfg.postgresql.password_env_var | default('PGPASSWORD') }}"
+      environment:
+        PGPASSWORD: "{{ lookup('env', archive_cfg.postgresql.password_env_var | default('PGPASSWORD')) | default('', true) }}"
+      register: db_upload_run
+      changed_when: db_upload_run.rc == 0
+      when: archive_cfg_stat.stat.exists
+
     - name: Show master JSON path
       ansible.builtin.debug:
         msg: "Master JSON written to {{ master_json_path }}"
@@ -141,6 +326,9 @@
         msg: |
           Artifacts for run {{ run_id }}:
             master:       {{ master_json_path }}
+            pass/fail:    {{ (master_result_field.stdout | default('n/a') | trim) if pass_or_fail_cfg_stat.stat.exists else 'skipped (no pass_or_fail_cfg.yaml)' }}
+            archive:      {{ artifact_archive_run.stdout | default('skipped (set CPT_ARTIFACT_ROOT or archive_cfg artifact_storage.root)') | trim }}
+            db upload:    {{ 'ok' if (db_upload_run is defined and db_upload_run.rc | default(1) == 0) else 'skipped' }}
             results:      {{ results_json }}
             monitoring:   {{ monitoring_json }}
             bench PCP:    {{ bench_metrics_log }}

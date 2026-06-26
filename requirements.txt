@@ -1,0 +1,3 @@
+# Controller Python deps (pass_or_fail, DB upload). Install in a venv on the control node.
+git+https://github.com/redhat-performance/opl.git
+psycopg2-binary

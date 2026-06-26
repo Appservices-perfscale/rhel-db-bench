@@ -134,6 +134,17 @@
       changed_when: false
       failed_when: hammerdb_image_check.rc != 0
 
+    - name: Default hammerdb_virtual_users from matrix list when unset
+      ansible.builtin.set_fact:
+        hammerdb_virtual_users: >-
+          {{
+            (
+              (hammerdb_virtual_users_matrix | default('') | string | split(','))
+              | map('trim') | reject('equalto', '') | map('int') | list
+            )[0] | default(112, true)
+          }}
+      when: hammerdb_virtual_users is not defined
+
     - name: Ensure remote work directory for HammerDB scripts exists
       ansible.builtin.file:
         path: "{{ hammerdb_remote_workdir }}"
@@ -282,7 +293,7 @@
         client_metrics_samples_log_basename: "{{ _client_metrics_samples_basename }}"
         client_metrics_samples_log_fetched: "{{ client_metrics_fetch is succeeded }}"
         client_metrics_pmdumptext_metric_names: "{{ _client_metrics_pmdumptext_names }}"
-        client_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(5) | int }}"
+        client_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(4) | int }}"
       when: pcp_capture_enable | default(true) | bool
 
     - name: Show HammerDB run output
@@ -301,8 +312,8 @@
 
     - name: Parse NOPM and TPM from HammerDB output
       ansible.builtin.set_fact:
-        result_nopm: "{{ hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved ([0-9]+) NOPM from [0-9]+ PostgreSQL TPM') | first | default('') }}"
-        result_tpm: "{{ hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved [0-9]+ NOPM from ([0-9]+) PostgreSQL TPM') | first | default('') }}"
+        result_nopm: "{{ (hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved ([0-9]+) NOPM from [0-9]+ PostgreSQL TPM') | first | default('0')) | int }}"
+        result_tpm: "{{ (hammerdb_run_out.stdout | regex_findall('TEST RESULT : System achieved [0-9]+ NOPM from ([0-9]+) PostgreSQL TPM') | first | default('0')) | int }}"
 
     - name: Show parsed results
       ansible.builtin.debug:
@@ -355,7 +366,7 @@
         bench_metrics_samples_log_basename: "{{ _bench_metrics_samples_basename }}"
         bench_metrics_samples_log_fetched: "{{ bench_metrics_fetch is succeeded }}"
         bench_metrics_pmdumptext_metric_names: "{{ _bench_metrics_pmdumptext_names }}"
-        bench_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(5) | int }}"
+        bench_metrics_sample_interval_sec: "{{ pcp_sample_interval_sec | default(4) | int }}"
       when: pcp_capture_enable | default(true) | bool
 
 - name: Write benchmark report (local controller)
@@ -415,20 +426,20 @@
             virtual_users: "{{ _cv.get('hammerdb_virtual_users', '') | string }}"
             warehouses: "{{ _cv.get('hammerdb_warehouses', '') | string }}"
           results:
-            nopm: "{{ _cv.get('result_nopm', '') | string }}"
-            tpm: "{{ _cv.get('result_tpm', '') | string }}"
+            nopm: "{{ _cv.get('result_nopm', 0) | int }}"
+            tpm: "{{ _cv.get('result_tpm', 0) | int }}"
           timing:
             start_epoch: "{{ _bv.get('test_start_epoch', '') | string }}"
             end_epoch: "{{ _cv.get('test_end_epoch', '') | string }}"
           bench_metrics:
             capture_enabled: "{{ _bv.get('pcp_capture_enable', true) | bool }}"
-            sample_interval_sec: "{{ _bv.get('bench_metrics_sample_interval_sec', _bv.get('pcp_sample_interval_sec', 5)) | int }}"
+            sample_interval_sec: "{{ _bv.get('bench_metrics_sample_interval_sec', _bv.get('pcp_sample_interval_sec', 4)) | int }}"
             pmdumptext_metric_names: "{{ _bv.get('bench_metrics_pmdumptext_metric_names', []) }}"
             samples_log_filename: "{{ _bv.get('bench_metrics_samples_log_basename', '') | string }}"
             samples_log_fetched: "{{ _bv.get('bench_metrics_samples_log_fetched', false) | bool }}"
           client_metrics:
             capture_enabled: "{{ _cv.get('pcp_capture_enable', true) | bool }}"
-            sample_interval_sec: "{{ _cv.get('client_metrics_sample_interval_sec', _cv.get('pcp_sample_interval_sec', 5)) | int }}"
+            sample_interval_sec: "{{ _cv.get('client_metrics_sample_interval_sec', _cv.get('pcp_sample_interval_sec', 4)) | int }}"
             pmdumptext_metric_names: "{{ _cv.get('client_metrics_pmdumptext_metric_names', []) }}"
             samples_log_filename: "{{ _cv.get('client_metrics_samples_log_basename', '') | string }}"
             samples_log_fetched: "{{ _cv.get('client_metrics_samples_log_fetched', false) | bool }}"

@@ -49,7 +49,7 @@ Requires `setup.yaml` to have been run once before the first benchmark.
 |----------|----------|
 | Quick benchmark, you only need NOPM/TPM and PCP data | `test.yaml` |
 | Full pipeline with master JSON including OS facts | `site.yml` |
-| Automated matrix runs (multiple VU counts) | `run-matrix.yaml` (calls `site.yml` internally) |
+| Automated matrix runs (multiple VU counts) | `./scripts/cpt-run.sh matrix` (`site.yml` per VU, `cleanup.yaml` between runs) |
 
 `site.yml` is a superset — it `import_playbook`s `test.yaml` as Phase 1, then
 adds an artifact assembly phase on top.
@@ -230,7 +230,7 @@ results/
   └──────┬───────┘
          ▼
   ┌──────────────┐
-  │ (next run)   │  site.yml again, or run-matrix.yaml for automated sweeps
+  │ (next run)   │  site.yml again, or cpt-run.sh matrix for automated VU sweeps
   └──────────────┘
 ```
 

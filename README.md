@@ -87,6 +87,7 @@ ansible-playbook playbooks/scalelab-cleanup.yaml
 | [docs/setup_EL9.md](docs/setup_EL9.md) | RHEL 9.0 setup with PGDG workaround |
 | [docs/test-logic.md](docs/test-logic.md) | Benchmark flow, PostgreSQL tuning rationale, PCP metrics |
 | [docs/site.md](docs/site.md) | Full pipeline: test + master JSON assembly |
+| [docs/cpt-developer.md](docs/cpt-developer.md) | Baseline vs compare runs, CPT profiles, `cpt-run.sh` |
 | [docs/cleanup.md](docs/cleanup.md) | Reset between benchmark runs |
 | [docs/scalelab-cleanup.md](docs/scalelab-cleanup.md) | Release ScaleLab hosts after testing |
 
@@ -112,7 +113,6 @@ DB-CPT-RHEL/
 │   ├── site.yml                 Full pipeline (test + master assembly)
 │   ├── cleanup.yaml             Reset between runs
 │   ├── scalelab-cleanup.yaml    Release ScaleLab hosts
-│   ├── run-matrix.yaml          Automated VU sweep
 │   └── tasks/                   Reusable task includes
 │
 ├── templates/                   Jinja2 templates (Tcl scripts, repo files)
@@ -126,7 +126,7 @@ DB-CPT-RHEL/
 
 ## Requirements
 
-- **Ansible** 2.14+ with `community.postgresql` and `community.general` collections
-- **Python 3** on the controller (for PCP log processing and facts merge)
+- **Ansible** 2.14+ with `community.postgresql` and `community.general` collections (`ansible-galaxy install -r requirements.yml`)
+- **Python 3** on the controller: `pip install -r requirements.txt` (OPL pass/fail, DB upload)
 - **jq** on the controller (for master JSON assembly in `site.yml`)
 - Two bare-metal hosts (or VMs) running RHEL, reachable via SSH

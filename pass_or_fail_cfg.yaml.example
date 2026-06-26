@@ -1,0 +1,76 @@
+---
+# Copy to pass_or_fail_cfg.yaml and set pg_host, pg_user, pg_database.
+#
+# When this file exists, playbooks/site.yml automatically runs pass_or_fail.py.
+# Master JSON upload and artifact archival use archive_cfg.yaml (see .example).
+#
+# Password is read from the environment (not stored in this file):
+#   export PGPASSWORD='your-password'
+#
+# Create DB-CPT-RHEL tables once (does not touch any existing tables):
+#   psql -h HOST -U USER -d DATABASE -f scripts/db_cpt_rhel_schema.sql
+#
+# Controller packages:
+#   pip install git+https://github.com/redhat-performance/opl.git
+#   pip install psycopg2-binary
+#
+# Tables used (owned by this project only):
+#   db_cpt_rhel_data       — id, datetime, data (master.json; see archive_cfg.yaml)
+#   db_cpt_rhel_decisions  — pass_or_fail audit log
+
+history:
+  type: postgresql
+  pg_host: db.example.com
+  pg_port: 5432
+  pg_database: perf_results
+  pg_user: reader
+  pg_password_env_var: PGPASSWORD
+  # History matches CPT profile (name, VU, hardware, label) — not bench RHEL, so
+  # compare on 9.4 can regress against baseline runs on 9.0 with the same profile.
+  pg_query: |
+    SELECT data
+    FROM db_cpt_rhel_data
+    WHERE data->>'name' = '{{ current.get("name") }}'
+      AND data->'results'->'hammerdb'->>'virtual_users' = '{{ current.get("results.hammerdb.virtual_users") }}'
+      {% if current.get("cpt_profile.hardware") %}
+      AND coalesce(data->'cpt_profile'->>'hardware', '') = '{{ current.get("cpt_profile.hardware") }}'
+      {% endif %}
+      {% if current.get("cpt_profile.label") %}
+      AND coalesce(data->'cpt_profile'->>'label', '') = '{{ current.get("cpt_profile.label") }}'
+      {% endif %}
+      AND (data->>'id') IS DISTINCT FROM '{{ current.get("id") }}'
+    ORDER BY (data->>'started')::timestamptz DESC
+    LIMIT 30
+
+# Overridden at runtime: pass_or_fail.py --current-file <run>-master.json
+current:
+  type: status_data
+  file: /dev/null
+
+sets:
+  - name: results.results.nopm
+
+methods:
+  - check_by_gte_min
+
+decisions:
+  type: postgresql
+  pg_host: db.example.com
+  pg_port: 5432
+  pg_database: perf_results
+  pg_table: db_cpt_rhel_decisions
+  pg_user: reader
+  pg_password_env_var: PGPASSWORD
+
+# ── Local fallback (no database): replace history/decisions above with: ──
+#
+# history:
+#   type: sd_dir
+#   dir: results/RHEL_9.0
+#   matchers: |
+#     name: "{{ current.get('name') }}"
+#     results.hammerdb.virtual_users: "{{ current.get('results.hammerdb.virtual_users') }}"
+#
+# decisions:
+#   type: csv
+#   filename: results/.pass_or_fail-decisions.csv

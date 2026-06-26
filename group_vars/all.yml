@@ -1,0 +1,22 @@
+---
+# Normalize inventory.ini comma-separated or JSON list for PCP disk.dev metrics.
+_pcp_disk_dev_list: >-
+  {{
+    (pcp_disk_dev_instances | string | split(',') | map('trim') | reject('equalto', '') | list)
+    if (pcp_disk_dev_instances is string)
+    else (pcp_disk_dev_instances | default([]) | list)
+  }}
+
+# RHEL compose URL from os_prep_rhel_release_id (e.g. 9.4 → .../latest-RHEL-9.4.0).
+# Override with os_prep_rhel_release_root_override (dated compose) or -e os_prep_rhel_release_root=...
+os_prep_rhel_release_root: >-
+  {{
+    (os_prep_rhel_release_root_override | default('') | string | trim)
+    if (os_prep_rhel_release_root_override | default('') | string | trim | length > 0)
+    else (
+      (os_prep_rhel_release_root_prefix | string | trim)
+      ~ '/latest-RHEL-'
+      ~ (os_prep_rhel_release_id | string | trim)
+      ~ '.0'
+    )
+  }}

@@ -170,9 +170,10 @@ generator's network I/O.
 - **After the last run**: optional — only needed if you want to free the 270 GB
   shared_buffers allocation immediately.
 
-If you use `run-matrix.yaml`, it calls `site.yml` in a loop but does **not**
-call cleanup between iterations automatically — add a cleanup step if you need
-cold-start measurements for every VU configuration.
+If you use `./scripts/cpt-run.sh` (`baseline`, `compare`, or `matrix`), it runs
+`cleanup.yaml` **after** each `site.yml` when `CPT_CLEANUP=true` (default).
+The first run does not run cleanup first — `setup.yaml` already leaves a fresh
+database. Set `CPT_CLEANUP=false` to skip post-run cleanup.
 
 ---
 

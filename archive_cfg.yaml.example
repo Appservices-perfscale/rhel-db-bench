@@ -1,0 +1,25 @@
+---
+# Copy to archive_cfg.yaml (gitignored). Used by playbooks/site.yml to publish results.
+#
+#   export PGPASSWORD='your-password'
+#   psql -h HOST -U USER -d DATABASE -f scripts/db_cpt_rhel_schema.sql   # once
+#
+# Controller: pip install psycopg2-binary
+#
+# Jenkins file archive (logs + JSON): set CPT_ARTIFACT_ROOT instead of root below, e.g.
+#   export CPT_ARTIFACT_ROOT=/workspace/ARTIFACTS/DB-CPT-RHEL
+# Each run is copied to <CPT_ARTIFACT_ROOT>/<run_id>/ (30-day retention on Jenkins storage).
+
+postgresql:
+  host: db.example.com
+  port: 5432
+  database: perf_results
+  user: writer
+  password_env_var: PGPASSWORD
+  # Project data table: id (serial), datetime (test started), data (JSONB master document)
+  table: db_cpt_rhel_data
+
+artifact_storage:
+  enabled: true
+  # Local fallback when CPT_ARTIFACT_ROOT is unset. Optional on Jenkins if env is set.
+  root: /var/lib/db-cpt-rhel/archive

@@ -22,7 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-BYTES_PER_GIB = 1024**3
+# PCP mem.util.* values from pmdumptext are in Kbytes, not bytes.
+PCP_KIB_PER_GIB = 1024 * 1024
 # pmdumptext rates for disk.* in this toolchain are treated as KB/s; rough 4 KiB IOP est.
 KB_PER_4K_IOP = 4.0
 
@@ -298,9 +299,9 @@ def _row_to_sample(
     mu = by_name.get("mem.util.used")
     mf = by_name.get("mem.util.free")
     if mu is not None:
-        sample["mem_used_gib"] = round(mu / BYTES_PER_GIB, 2)
+        sample["mem_used_gib"] = round(mu / PCP_KIB_PER_GIB, 2)
     if mf is not None:
-        sample["mem_free_gib"] = round(mf / BYTES_PER_GIB, 2)
+        sample["mem_free_gib"] = round(mf / PCP_KIB_PER_GIB, 2)
 
     dr = by_name.get("disk.all.read")
     dw = by_name.get("disk.all.write")
