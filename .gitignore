@@ -11,6 +11,7 @@ quads_cfg.yaml
 pass_or_fail_cfg.yaml
 archive_cfg.yaml
 scalelab_assignment.yml
+results/
 
 .venv/
 
