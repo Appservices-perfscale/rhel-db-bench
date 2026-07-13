@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "Auto-merge low-risk pip dependency updates when CI passes",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchDepTypes": [
+        "dependencies"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Group Ansible Galaxy collection bumps",
+      "matchManagers": [
+        "ansible-galaxy"
+      ],
+      "groupName": "ansible-galaxy-collections"
+    },
+    {
+      "description": "Group UBI base image updates",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "registry.access.redhat.com/ubi9/ubi"
+      ],
+      "groupName": "ubi9-base"
+    }
+  ]
+}

@@ -88,6 +88,7 @@ ansible-playbook playbooks/scalelab-cleanup.yaml
 | [docs/test-logic.md](docs/test-logic.md) | Benchmark flow, PostgreSQL tuning rationale, PCP metrics |
 | [docs/site.md](docs/site.md) | Full pipeline: test + master JSON assembly |
 | [docs/cpt-developer.md](docs/cpt-developer.md) | Baseline vs compare runs, CPT profiles, `cpt-run.sh` |
+| [docs/container.md](docs/container.md) | Container image build, Quay publish, Konflux links |
 | [docs/cleanup.md](docs/cleanup.md) | Reset between benchmark runs |
 | [docs/scalelab-cleanup.md](docs/scalelab-cleanup.md) | Release ScaleLab hosts after testing |
 
@@ -127,6 +128,8 @@ DB-CPT-RHEL/
 ## Requirements
 
 - **Ansible** 2.14+ with `community.postgresql` and `community.general` collections (`ansible-galaxy install -r requirements.yml`)
-- **Python 3** on the controller: `pip install -r requirements.txt` (OPL pass/fail, DB upload)
+- **Python 3** on the controller: `./scripts/install-controller-deps.sh` or `pip install -r requirements.txt` plus OPL extras (see [docs/container.md](docs/container.md))
 - **jq** on the controller (for master JSON assembly in `site.yml`)
 - Two bare-metal hosts (or VMs) running RHEL, reachable via SSH
+
+For a pre-built controller image (Ansible + deps + playbooks), see [docs/container.md](docs/container.md).

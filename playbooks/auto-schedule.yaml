@@ -434,6 +434,7 @@
       ansible.builtin.set_fact:
         assignment_id: "{{ assignment_data.id }}"
         assignment_cloud: "{{ assignment_data.cloud.name | default('unknown') }}"
+        assignment_ticket: "{{ assignment_data.ticket | default('') }}"
       changed_when: false
 
     - name: Schedule each host on the assignment
@@ -468,6 +469,7 @@
       vars:
         scalelab_assignment_record:
           assignment_id: "{{ assignment_id }}"
+          assignment_ticket: "{{ assignment_ticket }}"
           assignment_description: "{{ workload_name }}"
           cloud_name: "{{ assignment_cloud }}"
           quads_api_server: "{{ quads_api_server }}"
@@ -486,6 +488,8 @@
         mode: "0600"
       vars:
         scalelab_ssh_pass: "{{ _scalelab_ssh_pass }}"
+        _foreman_username: "{{ assignment_cloud }}"
+        _foreman_password: "rdu2@{{ assignment_ticket }}"
 
     - name: Remove stale SSH host keys for scheduled ScaleLab hosts
       ansible.builtin.include_tasks: tasks/scalelab-ssh-known-hosts.yaml

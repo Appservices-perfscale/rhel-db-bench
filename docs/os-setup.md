@@ -57,11 +57,76 @@ reinstalled by `setup.yaml` anyway.
 
 ## What the playbook does
 
-The playbook contains two plays, both targeting `[remote]` (bench + client).
-Hosts run sequentially (`serial: 1`) to avoid rebooting both machines at the
-same time.
+The playbook chooses the migration path from the **current** OS major on the host
+vs the **requested** `os_prep_rhel_release_id`:
 
-### Play 1 — Sync OS to requested RHEL build
+| Situation | Path |
+|-----------|------|
+| Same major (e.g. 9.4 → 9.7) | `dnf distro-sync` against rel-eng compose |
+| Different major (e.g. 9.4 → 10.2) | **Foreman re-provision** (wipe + PXE reinstall via Badfish) |
+
+Major upgrades do **not** use distro-sync across majors (unsupported on RHEL).
+
+### Foreman rebuild (9 → 10)
+
+When the current OS major differs from the requested `os_prep_rhel_release_id`,
+the playbook uses the ScaleLab Foreman REST API to wipe and reinstall the host.
+If Foreman does not offer the exact target minor (e.g. only `RHEL 10.0` while
+you requested `10.2`), the playbook installs the **highest Foreman RHEL
+{major}.x that is still at or below the target**, then **distro-syncs** to the
+requested release on the eng compose mirror.
+
+Example: `cpt-run.sh --rhel 10.2` on a RHEL 9.4 host → Foreman rebuild to
+`RHEL 10.0` → `dnf distro-sync` to `10.2`.
+
+This is more reliable than in-place upgrade since `setup.yaml` reinstalls
+PostgreSQL, HammerDB, and PCP from scratch anyway.
+
+Adapted from the [QUADS project Foreman client](https://github.com/quadsproject/quads/blob/latest/src/quads/tools/external/foreman.py).
+
+1. **Resolve Foreman OS** — query Foreman operatingsystems and pick the best
+   install title for the target major (e.g. `RHEL 10.0` when targeting `10.2`).
+2. **Set OS on Foreman host record** — via the Foreman v2 REST API, set
+   `operatingsystem_id`, `medium_id`, `ptable_id`, and `build=true`.
+   The resolved OS title must exist in Foreman with at least one install medium
+   and partition table configured.
+3. **PXE boot via Badfish** — set next-boot to PXE (`-i config/idrac_interfaces.yml --boot-to-type foreman --pxe`)
+   and power-cycle the host (`--power-cycle`) using its BMC/iDRAC address.
+   The interfaces YAML maps Dell server models to Foreman PXE NIC order (from
+   [badfish](https://github.com/quadsproject/badfish/blob/master/config/idrac_interfaces.yml)).
+4. **Wait for rebuild** — poll password SSH until login works (default 5 min
+   initial pause, then up to ~85 min of retries). Port 22 can open before
+   kickstart finishes, so the playbook checks auth—not just the TCP port.
+5. **Distro-sync when needed** — if the Foreman install version is below the
+   target (e.g. `10.0` installed, `10.2` requested), run same-major
+   `dnf distro-sync` against the eng compose.
+6. **Verify target version** — `rpm -q redhat-release` must contain the
+   target release id.
+
+#### Prerequisites
+
+- **Foreman + Badfish credentials**: auto-derived by `auto-schedule.yaml`
+  from the QUADS assignment. Foreman username = cloud name (e.g. `cloud42`),
+  password = `rdu2@<ticket_number>`. Badfish username = `quads`, same password.
+  Written to `inventory.local.ini` `[remote:vars]` (gitignored).
+  BMC address per host is auto-derived as `mgmt-<hostname>`.
+  Foreman URL can be overridden via `foreman_url` in `quads_cfg.yaml`.
+- **Badfish installed** on the controller: `pip install badfish`
+  (included in `requirements.txt`).
+- **Target OS in Foreman**: list available titles with
+  `python3 scripts/foreman_resolve_os.py --url ... --user ... --password ... --release 10.2`
+  or `curl -su "cloudXX:pass" https://foreman.rdu2.scalelab.redhat.com/api/operatingsystems | jq '.results[]|{title,id}'`
+  Current ScaleLab titles often include `RHEL 9.4` and `RHEL 10.0`.
+
+For same-major **RHEL 10.x** pinning after a Foreman rebuild, set a dated eng compose:
+
+```ini
+os_prep_rhel_compose_name=RHEL-10.2-20260408.1
+```
+
+(`latest-RHEL-10.2.0` does not exist on the eng mirror.)
+
+### Distro-sync (same major)
 
 ```
   ┌───────────────────────────────────────────────────────────────────┐
@@ -163,15 +228,33 @@ Per-group variables live in `inventory.ini` under `[bench:vars]` and
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `os_prep_rhel_release_root` | **yes** | — | URL to the RHEL compose root (e.g. `http://download.eng.bos.redhat.com/rhel-9/nightly/RHEL-9/latest-RHEL-9.7.0/`). |
-| `os_prep_rhel_release_id` | **yes** | — | Expected minor release ID (e.g. `9.7`). Used for assertion checks. |
+| `os_prep_rhel_release_mirror` | no* | `https://download.eng.pnq.redhat.com` | Base mirror; compose prefix is derived as `rhel-<major>/rel-eng/RHEL-<major>` from each host's `os_prep_rhel_release_id` (bench `10.2` → rhel-10; client `9.4` → rhel-9). |
+| `os_prep_rhel_release_root_prefix` | no | — | Optional fixed prefix; overrides auto derivation for that host/group. |
+| `os_prep_rhel_release_root_override` | no | — | Full compose root URL (dated build); skips prefix + `latest-RHEL-*` derivation. |
+| `os_prep_rhel_release_id` | **yes** | — | Expected minor release ID (e.g. `9.7`, `10.2`). Used for assertion checks and URL derivation. |
 | `os_prep_rhel_arch` | no | `x86_64` | Architecture subdirectory in the compose tree. |
 | `os_prep_enable` | no | `true` | Set `false` to skip OS prep for a host. |
 | `os_prep_include_crb` | no | `false` | Include the CRB (CodeReady Builder) repository in the generated repo file. |
 | `os_prep_reboot_timeout` | no | `1800` | Seconds to wait for the host to come back after reboot. |
 | `os_prep_stop_services` | no | `[postgresql-<major>, pmcd]` | List of systemd services to stop before `distro-sync`. |
 | `os_prep_remove_provisioned_packages` | no | `true` | Remove PostgreSQL, PGDG, and PCP packages before sync. |
+| `os_prep_foreman_os_title` | no | `RHEL <release_id>` | Target OS title as registered in Foreman. |
+| `os_prep_foreman_host_fqdn` | no | `ansible_host` | Host FQDN as registered in Foreman. |
+| `os_prep_foreman_rebuild_timeout` | no | `5400` | Total seconds budget for Foreman rebuild SSH wait (delay + retries). |
+| `os_prep_foreman_rebuild_delay` | no | `300` | Seconds before first SSH auth attempt after PXE boot. |
+| `os_prep_foreman_rebuild_ssh_retries` | no | `85` | Password SSH attempts after the initial pause. |
+| `os_prep_foreman_rebuild_ssh_retry_delay` | no | `60` | Seconds between SSH auth attempts. |
+| `os_prep_badfish_interfaces_yaml` | no | `config/idrac_interfaces.yml` | Badfish NIC boot-order map for `--boot-to-type foreman`. |
 | `perf_results_path` | no | `results/` | Base directory for `facts.json` output on the controller. |
+
+Foreman and Badfish **credentials** are auto-derived from the QUADS
+assignment by `auto-schedule.yaml`: Foreman username = cloud name
+(e.g. `cloud42`), password = `rdu2@<ticket_number>`. Badfish username
+is always `quads` with the same password. These are written as
+`os_prep_foreman_*` / `os_prep_badfish_*` into `inventory.local.ini`
+`[remote:vars]` (gitignored). Per-host `os_prep_badfish_host` is
+auto-derived as `mgmt-<hostname>`. Override `foreman_url` in
+`quads_cfg.yaml` if needed.
 
 ---
 
@@ -187,8 +270,8 @@ Per-group variables live in `inventory.ini` under `[bench:vars]` and
 ```
 
 - **Fresh hosts**: always run `os-setup.yaml` before `setup.yaml`.
-- **Changing RHEL build**: update `os_prep_rhel_release_root` and
-  `os_prep_rhel_release_id` in inventory, then re-run `os-setup.yaml`
-  followed by `setup.yaml`.
+- **Changing RHEL build**: run `cpt-run.sh` with a new `--rhel` (e.g. `10.2` on bench while client stays on `9.4`).
+  Compose URLs are picked automatically from the major version (`rhel-9` vs `rhel-10`).
+  Re-run `setup.yaml` after a major change ( `cpt-run.sh` does this unless `--skip-setup`).
 - **Already on the correct build**: set `os_prep_enable: false` in inventory
   or simply skip the playbook.

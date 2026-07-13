@@ -1,7 +1,7 @@
 ---
 # Copy to archive_cfg.yaml (gitignored). Used by playbooks/site.yml to publish results.
 #
-#   export PGPASSWORD='your-password'
+#   export PGPASSWORD='your-password'   # optional override; else set password below
 #   psql -h HOST -U USER -d DATABASE -f scripts/db_cpt_rhel_schema.sql   # once
 #
 # Controller: pip install psycopg2-binary
@@ -15,6 +15,8 @@ postgresql:
   port: 5432
   database: perf_results
   user: writer
+  # Gitignored local secret; export PGPASSWORD overrides this when set.
+  password: your-password
   password_env_var: PGPASSWORD
   # Project data table: id (serial), datetime (test started), data (JSONB master document)
   table: db_cpt_rhel_data

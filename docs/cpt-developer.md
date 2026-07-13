@@ -5,14 +5,14 @@ How to seed a baseline and run regression checks without hand-editing configs ea
 ## One-time setup
 
 1. Reserve hosts (`auto-schedule.yaml`) and run `os-setup.yaml` + `setup.yaml` once.
-2. Copy config templates and set DB credentials:
+2. Copy config templates (passwords live in gitignored `archive_cfg.yaml`):
    ```bash
    cp pass_or_fail_cfg.yaml.example pass_or_fail_cfg.yaml
    cp archive_cfg.yaml.example archive_cfg.yaml
-   export PGPASSWORD='...'
+   # Set postgresql.password in archive_cfg.yaml (or export PGPASSWORD to override)
    ```
 3. Create DB tables: `psql ... -f scripts/db_cpt_rhel_schema.sql`
-4. Controller: `pip install -r requirements.txt` and `jq`.
+4. Controller: `./scripts/install-controller-deps.sh` and `jq`.
 
 On Jenkins, set `CPT_ARTIFACT_ROOT=/workspace/ARTIFACTS/DB-CPT-RHEL` (or `${JOB_NAME}`) instead of a local archive path.
 
@@ -92,17 +92,35 @@ ansible-playbook playbooks/site.yml \
 
 `cpt-run.sh` skips `os-setup.yaml` automatically when every `[bench]` host
 already reports the requested `--rhel` in `rpm -q redhat-release`. Use
-`--skip-os-setup` to force-skip, or change `--rhel` to trigger a distro-sync.
+`--skip-os-setup` to force-skip, or change `--rhel` to trigger os-setup (distro-sync or Foreman rebuild).
 
 ## Changing RHEL on the bench
 
-If you change `--rhel` to a version not yet installed on the bench host:
+ScaleLab hosts may arrive on RHEL 9.4 by default. **Same major** moves use
+`distro-sync`. **Different major** (9 → 10) uses **Foreman re-provision**
+automatically when majors differ. If Foreman only has `RHEL 10.0` but you
+request `10.2`, os-setup Foreman-installs `10.0` then distro-syncs to `10.2`.
+Foreman and Badfish credentials are auto-derived from the QUADS assignment by
+`auto-schedule.yaml`.
 
 ```bash
+# Bench 9.4 → 10.2 via Foreman rebuild (client stays on 9.4)
+./scripts/cpt-run.sh compare --rhel 10.2 --hardware r650
+```
+
+Optional dated eng compose for post-rebuild same-major pin on RHEL 10:
+
+```ini
+# [bench:vars]
+os_prep_rhel_compose_name=RHEL-10.2-20260408.1
+```
+
+```bash
+# Step by step
 ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini \
-  -e os_prep_rhel_release_id=9.4
-ansible-playbook playbooks/setup.yaml   # if PG/packages need refresh
-./scripts/cpt-run.sh compare --rhel 9.4 --hardware r650
+  --limit bench -e bench_rhel_release_id=10.2
+ansible-playbook playbooks/setup.yaml --limit bench
+./scripts/cpt-run.sh compare --rhel 10.2 --hardware r650 --skip-os-setup --skip-setup
 ```
 
 ## Where to view results

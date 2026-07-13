@@ -1,0 +1,64 @@
+---
+# Query Foreman for available RHEL OS titles and pick the best install target
+# for os_prep_rhel_release_id. When Foreman only has RHEL 10.0 but the target
+# is 10.2, this sets os_prep_foreman_os_title to "RHEL 10.0" and flags a
+# follow-up distro-sync to the requested release.
+
+- name: Validate required Foreman variables for OS resolution
+  ansible.builtin.assert:
+    that:
+      - os_prep_foreman_url is defined and os_prep_foreman_url | string | trim | length > 0
+      - os_prep_foreman_username is defined and os_prep_foreman_username | string | trim | length > 0
+      - os_prep_foreman_password is defined and os_prep_foreman_password | string | trim | length > 0
+    fail_msg: >-
+      Foreman OS resolution requires os_prep_foreman_url, os_prep_foreman_username,
+      and os_prep_foreman_password in inventory [remote:vars] or via -e.
+  changed_when: false
+
+- name: Resolve Foreman install OS for target RHEL release
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/foreman_resolve_os.py"
+      - --url
+      - "{{ os_prep_foreman_url }}"
+      - --user
+      - "{{ os_prep_foreman_username }}"
+      - --password
+      - "{{ os_prep_foreman_password }}"
+      - --release
+      - "{{ os_prep_rhel_release_id }}"
+  delegate_to: localhost
+  become: false
+  register: _foreman_os_resolve_result
+  changed_when: false
+  no_log: "{{ os_prep_foreman_no_log | default(true) | bool }}"
+
+- name: Parse Foreman OS resolution
+  ansible.builtin.set_fact:
+    _foreman_os_resolve: "{{ _foreman_os_resolve_result.stdout | from_json }}"
+  changed_when: false
+
+- name: Fail if Foreman OS resolution returned an error
+  ansible.builtin.assert:
+    that:
+      - _foreman_os_resolve.error is not defined
+    fail_msg: "Foreman OS resolution failed: {{ _foreman_os_resolve.error | default('unknown') }}"
+  changed_when: false
+
+- name: Apply Foreman OS resolution
+  ansible.builtin.set_fact:
+    os_prep_foreman_os_title: "{{ _foreman_os_resolve.foreman_os_title }}"
+    os_prep_post_foreman_distro_sync_needed: "{{ _foreman_os_resolve.distro_sync_needed | bool }}"
+  changed_when: false
+
+- name: Show Foreman OS resolution plan
+  ansible.builtin.debug:
+    msg: >-
+      Target RHEL {{ os_prep_rhel_release_id }}:
+      Foreman install {{ _foreman_os_resolve.foreman_os_title }}
+      {%- if _foreman_os_resolve.distro_sync_needed | bool -%}
+       then distro-sync to {{ os_prep_rhel_release_id }}
+      {%- endif -%}
+      (Foreman RHEL {{ _os_prep_rhel_major }} options:
+      {{ _foreman_os_resolve.available_rhel_releases | join(', ') }})

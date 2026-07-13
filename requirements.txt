@@ -1,3 +1,7 @@
-# Controller Python deps (pass_or_fail, DB upload). Install in a venv on the control node.
-git+https://github.com/redhat-performance/opl.git
+# Controller Python deps (pass_or_fail, DB upload, Foreman rebuild).
+# Install in a venv on the control node.
+# Use OPL core only (pass_or_fail lives here; full opl pulls gevent and other heavy deps).
+git+https://github.com/redhat-performance/opl.git#subdirectory=core
 psycopg2-binary
+requests
+badfish

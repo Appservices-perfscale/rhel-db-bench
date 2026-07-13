@@ -7,16 +7,58 @@ _pcp_disk_dev_list: >-
     else (pcp_disk_dev_instances | default([]) | list)
   }}
 
-# RHEL compose URL from os_prep_rhel_release_id (e.g. 9.4 → .../latest-RHEL-9.4.0).
-# Override with os_prep_rhel_release_root_override (dated compose) or -e os_prep_rhel_release_root=...
+# Major version from os_prep_rhel_release_id (9.4 → 9, 10.2 → 10).
+_os_prep_rhel_major: "{{ (os_prep_rhel_release_id | string | trim).split('.')[0] }}"
+
+# Compose prefix: explicit os_prep_rhel_release_root_prefix, else mirror + major.
+os_prep_rhel_release_root_prefix_resolved: >-
+  {{
+    (os_prep_rhel_release_root_prefix | string | trim)
+    if (os_prep_rhel_release_root_prefix | default('') | string | trim | length > 0)
+    else (
+      (os_prep_rhel_release_mirror | default('https://download.eng.pnq.redhat.com') | string | trim | regex_replace('/$', ''))
+      ~ '/rhel-' ~ _os_prep_rhel_major
+      ~ '/rel-eng/RHEL-' ~ _os_prep_rhel_major
+    )
+  }}
+
+# RHEL compose name: explicit dated compose, or auto-derived latest-RHEL-<release_id>.
+_os_prep_compose_name: "{{ os_prep_rhel_compose_name | default('') | string | trim }}"
+
+# RHEL compose root for distro-sync (same-major pin). Override, dated compose, or latest-RHEL-*.
+# Symlinks: RHEL 9 has both latest-RHEL-9.4.0 and latest-RHEL-9.4; RHEL 10+ only latest-RHEL-10.0.
 os_prep_rhel_release_root: >-
   {{
     (os_prep_rhel_release_root_override | default('') | string | trim)
     if (os_prep_rhel_release_root_override | default('') | string | trim | length > 0)
     else (
-      (os_prep_rhel_release_root_prefix | string | trim)
-      ~ '/latest-RHEL-'
-      ~ (os_prep_rhel_release_id | string | trim)
-      ~ '.0'
+      (os_prep_rhel_release_root_prefix_resolved | string | trim)
+      ~ '/'
+      ~ (
+        _os_prep_compose_name
+        if (_os_prep_compose_name | length > 0)
+        else (
+          'latest-RHEL-'
+          ~ (os_prep_rhel_release_id | string | trim)
+        )
+      )
     )
   }}
+
+# Foreman re-provision: wipe and reinstall the host when changing RHEL major
+# version (e.g. 9 → 10).  Credentials live in inventory.local.ini [remote:vars]
+# (gitignored, written by auto-schedule.yaml). Do not set empty defaults here —
+# group_vars/all.yml overrides inventory group vars.
+# Foreman user = cloud name, password = rdu2@<ticket>; Badfish user = quads.
+# OS title: auto-derived as "RHEL <release_id>" unless overridden via -e or inventory.
+# Total seconds budget for Foreman rebuild SSH wait (initial delay + auth retries).
+# Bare-metal RHEL installs typically take 40–70 min; 90 min provides margin.
+os_prep_foreman_rebuild_timeout: 5400
+# Seconds to wait before first SSH auth attempt after PXE boot.
+os_prep_foreman_rebuild_delay: 300
+# Poll password SSH until login works (port 22 may open before kickstart finishes).
+# Default retries × delay ≈ timeout − delay (85 × 60s = 5100s after the 300s pause).
+os_prep_foreman_rebuild_ssh_retry_delay: 60
+os_prep_foreman_rebuild_ssh_retries: 85
+# Suppress Foreman/Badfish credentials from Ansible output.
+os_prep_foreman_no_log: true

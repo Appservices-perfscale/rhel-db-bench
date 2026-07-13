@@ -1,0 +1,81 @@
+---
+# Pin host to os_prep_rhel_release_root via compose repos + dnf distro-sync.
+# Optional: pass os_prep_distro_sync_release_id / os_prep_distro_sync_release_root to override per call.
+- name: Resolve distro-sync release id
+  ansible.builtin.set_fact:
+    _distro_sync_release_id: "{{ os_prep_distro_sync_release_id | default(os_prep_rhel_release_id) | string | trim }}"
+    _distro_sync_release_root: >-
+      {{
+        (os_prep_distro_sync_release_root | default('') | string | trim)
+        if (os_prep_distro_sync_release_root | default('') | string | trim | length > 0)
+        else os_prep_rhel_release_root
+      }}
+  changed_when: false
+
+- name: Show distro-sync target
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: distro-sync to {{ _distro_sync_release_root }}
+      (release id {{ _distro_sync_release_id }})
+
+- name: List existing yum repository files
+  ansible.builtin.find:
+    paths: /etc/yum.repos.d
+    patterns: "*.repo"
+    file_type: file
+  register: os_prep_old_repos
+
+- name: Remove existing yum repository files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ os_prep_old_repos.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Install BaseOS and AppStream repository definitions
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/os-prep-rhel.repo.j2"
+    dest: /etc/yum.repos.d/os-prep-rhel.repo
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    os_prep_rhel_release_root: "{{ _distro_sync_release_root }}"
+
+- name: Pin DNF releasever to target RHEL minor
+  ansible.builtin.copy:
+    dest: /etc/dnf/vars/releasever
+    content: "{{ _distro_sync_release_id }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Clean DNF metadata
+  ansible.builtin.command: dnf clean all
+  changed_when: true
+
+- name: Distro-sync to the configured RHEL tree
+  ansible.builtin.command: >-
+    dnf -y --disableplugin=subscription-manager distro-sync --allowerasing
+  register: os_prep_distro_sync
+  changed_when: os_prep_distro_sync.rc == 0
+
+- name: Read installed redhat-release after distro-sync
+  ansible.builtin.command: rpm -q redhat-release
+  register: os_prep_redhat_release_pre
+  changed_when: false
+
+- name: Confirm redhat-release matches distro-sync release id
+  ansible.builtin.assert:
+    that:
+      - _distro_sync_release_id in os_prep_redhat_release_pre.stdout
+    fail_msg: >-
+      Expected '{{ _distro_sync_release_id }}' in redhat-release output;
+      got: {{ os_prep_redhat_release_pre.stdout }}
+  changed_when: false
+
+- name: Reboot to run the synced kernel
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ os_prep_reboot_timeout | default(1800) | int }}"
+    test_command: uptime

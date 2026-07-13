@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "DB-CPT-RHEL benchmark overview: TPM/NOPM, PCP monitoring (bench + client), and pass/fail results from PostgreSQL master.json archive.",
+  "description": "DB-CPT-RHEL benchmark overview: side-by-side RHEL version comparison (Pipelines-style), latest-run bar charts by virtual users, PCP monitoring, and pass/fail from PostgreSQL.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -32,231 +32,8 @@
       },
       "id": 100,
       "panels": [],
-      "title": "Summary",
+      "title": "Benchmark results over time",
       "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "dekgyz85doxdse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 1
-      },
-      "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "dekgyz85doxdse"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT nopm AS \"Latest NOPM\"\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\nORDER BY run_started DESC\nLIMIT 1",
-          "refId": "A"
-        }
-      ],
-      "title": "Latest NOPM",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "dekgyz85doxdse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 1
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "dekgyz85doxdse"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT tpm AS \"Latest TPM\"\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\nORDER BY run_started DESC\nLIMIT 1",
-          "refId": "A"
-        }
-      ],
-      "title": "Latest TPM",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "dekgyz85doxdse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "FAIL": {
-                  "color": "red",
-                  "index": 0,
-                  "text": "FAIL"
-                },
-                "PASS": {
-                  "color": "green",
-                  "index": 1,
-                  "text": "PASS"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "match": "null",
-                "result": {
-                  "color": "orange",
-                  "index": 2,
-                  "text": "N/A"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 1
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "dekgyz85doxdse"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT coalesce(pass_fail, 'N/A') AS \"Latest result\"\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\nORDER BY run_started DESC\nLIMIT 1",
-          "refId": "A"
-        }
-      ],
-      "title": "Latest pass/fail",
-      "type": "stat"
     },
     {
       "datasource": {
@@ -268,6 +45,39 @@
           "color": {
             "mode": "palette-classic"
           },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
           "decimals": 0,
           "mappings": [],
           "thresholds": {
@@ -276,10 +86,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -288,28 +94,24 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
+        "h": 8,
+        "w": 12,
+        "x": 0,
         "y": 1
       },
-      "id": 4,
+      "id": 110,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
       },
       "pluginVersion": "11.5.1",
       "targets": [
@@ -319,14 +121,493 @@
             "uid": "dekgyz85doxdse"
           },
           "editorMode": "code",
-          "format": "table",
+          "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT count(*) AS \"Runs in range\"\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'",
+          "rawSql": "SELECT\n  run_started AS time,\n  nopm AS value,\n  'NOPM @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${baseline_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Runs in time range",
-      "type": "stat"
+      "title": "NOPM \u2014 RHEL ${baseline_rhel}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "dekgyz85doxdse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 111,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "dekgyz85doxdse"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_started AS time,\n  nopm AS value,\n  'NOPM @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${compare_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "NOPM \u2014 RHEL ${compare_rhel}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "dekgyz85doxdse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 112,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "dekgyz85doxdse"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_started AS time,\n  tpm AS value,\n  'TPM @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${baseline_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "TPM \u2014 RHEL ${baseline_rhel}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "dekgyz85doxdse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 113,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "dekgyz85doxdse"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_started AS time,\n  tpm AS value,\n  'TPM @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${compare_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "TPM \u2014 RHEL ${compare_rhel}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "dekgyz85doxdse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 114,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "dekgyz85doxdse"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_started AS time,\n  CASE WHEN pass_fail = 'PASS' THEN 1 WHEN pass_fail = 'FAIL' THEN 0 END AS value,\n  'result @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${baseline_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\n  AND pass_fail IS NOT NULL\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Pass/Fail (1=PASS, 0=FAIL) \u2014 RHEL ${baseline_rhel}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "dekgyz85doxdse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 115,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "dekgyz85doxdse"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  run_started AS time,\n  CASE WHEN pass_fail = 'PASS' THEN 1 WHEN pass_fail = 'FAIL' THEN 0 END AS value,\n  'result @ ' || virtual_users AS metric\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND bench_rhel_release = '${compare_rhel}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\n  AND pass_fail IS NOT NULL\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Pass/Fail (1=PASS, 0=FAIL) \u2014 RHEL ${compare_rhel}",
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -334,11 +615,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 25
       },
       "id": 200,
       "panels": [],
-      "title": "RHEL comparison by virtual users",
+      "title": "RHEL comparison by virtual users (latest run per VU)",
       "type": "row"
     },
     {
@@ -458,7 +739,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 6
+        "y": 26
       },
       "id": 201,
       "options": {
@@ -494,7 +775,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    nopm\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN nopm END) AS \"NOPM (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN nopm END) AS \"NOPM (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    nopm\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN nopm END) AS \"NOPM (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN nopm END) AS \"NOPM (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -618,7 +899,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 6
+        "y": 26
       },
       "id": 202,
       "options": {
@@ -654,7 +935,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n  virtual_users::int AS vu,\n    bench_rhel_release,\n    tpm\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN tpm END) AS \"TPM (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN tpm END) AS \"TPM (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n  virtual_users::int AS vu,\n    bench_rhel_release,\n    tpm\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN tpm END) AS \"TPM (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN tpm END) AS \"TPM (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -784,7 +1065,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 6
+        "y": 26
       },
       "id": 203,
       "options": {
@@ -820,7 +1101,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_cpu_max_pct\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_cpu_max_pct END) AS \"max CPU % (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_cpu_max_pct END) AS \"max CPU % (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_cpu_max_pct\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_cpu_max_pct END) AS \"max CPU % (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_cpu_max_pct END) AS \"max CPU % (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -944,7 +1225,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 6
+        "y": 26
       },
       "id": 204,
       "options": {
@@ -980,7 +1261,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_read_iops_avg\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_read_iops_avg END) AS \"avg Read IOPS (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_read_iops_avg END) AS \"avg Read IOPS (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_read_iops_avg\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_read_iops_avg END) AS \"avg Read IOPS (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_read_iops_avg END) AS \"avg Read IOPS (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -1104,7 +1385,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 14
+        "y": 34
       },
       "id": 206,
       "options": {
@@ -1140,7 +1421,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_net_in_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_net_in_avg_kbps END) AS \"Net In KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_net_in_avg_kbps END) AS \"Net In KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_net_in_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_net_in_avg_kbps END) AS \"Net In KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_net_in_avg_kbps END) AS \"Net In KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -1264,7 +1545,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 14
+        "y": 34
       },
       "id": 207,
       "options": {
@@ -1300,7 +1581,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_net_out_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_net_out_avg_kbps END) AS \"Net Out KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_net_out_avg_kbps END) AS \"Net Out KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_net_out_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_net_out_avg_kbps END) AS \"Net Out KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_net_out_avg_kbps END) AS \"Net Out KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -1424,7 +1705,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 14
+        "y": 34
       },
       "id": 208,
       "options": {
@@ -1460,7 +1741,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    client_net_out_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN client_net_out_avg_kbps END) AS \"Client Net Out KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN client_net_out_avg_kbps END) AS \"Client Net Out KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    client_net_out_avg_kbps\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN client_net_out_avg_kbps END) AS \"Client Net Out KB/s (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN client_net_out_avg_kbps END) AS \"Client Net Out KB/s (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -1584,7 +1865,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 14
+        "y": 34
       },
       "id": 205,
       "options": {
@@ -1620,7 +1901,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_write_iops_avg\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_write_iops_avg END) AS \"avg Write IOPS (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_write_iops_avg END) AS \"avg Write IOPS (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
+          "rawSql": "WITH picked AS (\n  SELECT DISTINCT ON (virtual_users::int, bench_rhel_release)\n    virtual_users::int AS vu,\n    bench_rhel_release,\n    bench_write_iops_avg\n  FROM db_cpt_rhel_runs_v\n  WHERE $__timeFilter(run_started)\n    AND hardware ~* '${hardware:regex}'\n    AND bench_rhel_family ~ '${rhel_family:regex}'\n    AND virtual_users::text ~ '${virtual_users:regex}'\n    AND bench_rhel_release IN ('${baseline_rhel}', '${compare_rhel}')\n  ORDER BY virtual_users::int, bench_rhel_release, run_started DESC\n)\nSELECT\n  vu::text AS \"Virtual Users\",\n  max(CASE WHEN bench_rhel_release = '${baseline_rhel}' THEN bench_write_iops_avg END) AS \"avg Write IOPS (baseline ${baseline_rhel})\",\n  max(CASE WHEN bench_rhel_release = '${compare_rhel}' THEN bench_write_iops_avg END) AS \"avg Write IOPS (compare ${compare_rhel})\"\nFROM picked\nGROUP BY vu\nORDER BY vu",
           "refId": "A"
         }
       ],
@@ -1633,7 +1914,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 42
       },
       "id": 102,
       "panels": [],
@@ -1708,7 +1989,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 32
+        "y": 52
       },
       "id": 20,
       "options": {
@@ -1807,7 +2088,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 32
+        "y": 52
       },
       "id": 21,
       "options": {
@@ -1906,7 +2187,7 @@
         "h": 7,
         "w": 6,
         "x": 12,
-        "y": 32
+        "y": 52
       },
       "id": 22,
       "options": {
@@ -2005,7 +2286,7 @@
         "h": 7,
         "w": 6,
         "x": 18,
-        "y": 32
+        "y": 52
       },
       "id": 23,
       "options": {
@@ -2044,7 +2325,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 59
       },
       "id": 103,
       "panels": [],
@@ -2119,7 +2400,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 40
+        "y": 60
       },
       "id": 30,
       "options": {
@@ -2218,7 +2499,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 40
+        "y": 60
       },
       "id": 31,
       "options": {
@@ -2317,7 +2598,7 @@
         "h": 7,
         "w": 6,
         "x": 12,
-        "y": 40
+        "y": 60
       },
       "id": 32,
       "options": {
@@ -2416,7 +2697,7 @@
         "h": 7,
         "w": 6,
         "x": 18,
-        "y": 40
+        "y": 60
       },
       "id": 33,
       "options": {
@@ -2455,7 +2736,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 67
       },
       "id": 104,
       "panels": [],
@@ -2547,7 +2828,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 68
       },
       "id": 40,
       "options": {
@@ -2790,7 +3071,7 @@
         "h": 11,
         "w": 16,
         "x": 8,
-        "y": 48
+        "y": 68
       },
       "id": 41,
       "options": {
@@ -2821,7 +3102,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  run_started,\n  hardware,\n  bench_rhel_family,\n  bench_rhel_release,\n  client_rhel_release,\n  virtual_users,\n  warehouses,\n  nopm,\n  tpm,\n  pass_fail,\n  profile_label,\n  is_baseline,\n  tuning_profile,\n  bench_kernel,\n  run_id\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\nORDER BY run_started DESC",
+          "rawSql": "SELECT\n  run_started,\n  hardware,\n  bench_rhel_family,\n  bench_rhel_release,\n  client_rhel_release,\n  virtual_users,\n  warehouses,\n  nopm,\n  tpm,\n  pass_fail,\n  profile_label,\n  is_baseline,\n  tuning_profile,\n  bench_kernel,\n  run_id\nFROM db_cpt_rhel_runs_v\nWHERE $__timeFilter(run_started)\n  AND hardware ~* '${hardware:regex}'\n  AND bench_rhel_family ~ '${rhel_family:regex}'\n  AND virtual_users::text ~ '${virtual_users:regex}'\nORDER BY run_started DESC",
           "refId": "A"
         }
       ],
@@ -2893,6 +3174,32 @@
         "type": "query"
       },
       {
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "dekgyz85doxdse"
+        },
+        "definition": "SELECT DISTINCT virtual_users::int AS vu FROM db_cpt_rhel_runs_v ORDER BY 1",
+        "includeAll": true,
+        "label": "Virtual users",
+        "multi": true,
+        "name": "virtual_users",
+        "options": [],
+        "query": "SELECT DISTINCT virtual_users::int AS vu FROM db_cpt_rhel_runs_v ORDER BY 1",
+        "refresh": 2,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      },
+      {
         "current": {
           "text": "9.0",
           "value": "9.0"
@@ -2903,7 +3210,7 @@
         },
         "definition": "SELECT DISTINCT bench_rhel_release FROM db_cpt_rhel_runs_v ORDER BY bench_rhel_release",
         "includeAll": false,
-        "label": "Baseline RHEL",
+        "label": "Baseline RHEL (version 1)",
         "multi": false,
         "name": "baseline_rhel",
         "options": [],
@@ -2924,7 +3231,7 @@
         },
         "definition": "SELECT DISTINCT bench_rhel_release FROM db_cpt_rhel_runs_v ORDER BY bench_rhel_release",
         "includeAll": false,
-        "label": "Compare RHEL",
+        "label": "Compare RHEL (version 2)",
         "multi": false,
         "name": "compare_rhel",
         "options": [],
@@ -2944,6 +3251,6 @@
   "timezone": "utc",
   "title": "DB-CPT-RHEL",
   "uid": "db-cpt-rhel",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

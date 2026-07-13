@@ -1,0 +1,33 @@
+---
+# Stop benchmark services and remove PGDG/PCP packages before OS migration.
+- name: Stop services before OS version pin
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ os_prep_stop_services | default(['postgresql-' ~ (postgresql_major | default(17) | string), 'pmcd']) }}"
+  failed_when: false
+
+- name: List installed RPM names
+  ansible.builtin.command: rpm -qa --qf '%{NAME}\n'
+  register: os_prep_installed_rpms
+  changed_when: false
+  when: os_prep_remove_provisioned_packages | default(true) | bool
+
+- name: Select PostgreSQL, PGDG, and PCP packages to remove before OS migration
+  ansible.builtin.set_fact:
+    os_prep_packages_to_remove: >-
+      {{
+        os_prep_installed_rpms.stdout_lines
+        | select('match', '^(postgresql|pgdg-redhat-repo|pcp)')
+        | list
+      }}
+  when: os_prep_remove_provisioned_packages | default(true) | bool
+
+- name: Remove provisioned packages not in the target RHEL compose
+  ansible.builtin.dnf:
+    name: "{{ os_prep_packages_to_remove }}"
+    state: absent
+    disable_plugin: subscription-manager
+  when:
+    - os_prep_remove_provisioned_packages | default(true) | bool
+    - os_prep_packages_to_remove | default([]) | length > 0

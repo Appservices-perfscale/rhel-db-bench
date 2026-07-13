@@ -23,7 +23,8 @@
 # Run artifacts (logs + JSON) are copied to file storage when a root is configured via
 #   CPT_ARTIFACT_ROOT (Jenkins: e.g. /workspace/ARTIFACTS/DB-CPT-RHEL) or
 #   artifact_storage.root in archive_cfg.yaml (CPT_ARTIFACT_ROOT wins when set).
-# Requires: pip install opl pass_or_fail.py, psycopg2-binary, jq; export PGPASSWORD.
+# Requires: pip install opl pass_or_fail.py, psycopg2-binary, jq.
+# PostgreSQL password: archive_cfg.yaml postgresql.password (gitignored) or export PGPASSWORD.
 
 # ── Phase 1: Run the benchmark (HammerDB + PCP collection + report) ──
 - import_playbook: test.yaml
@@ -168,6 +169,49 @@
         path: "{{ results_dir }}/.{{ run_id }}-facts-merged.json"
         state: absent
 
+    - name: Check for archive config
+      ansible.builtin.stat:
+        path: "{{ archive_cfg_path }}"
+      register: archive_cfg_stat
+
+    - name: Load archive config
+      ansible.builtin.include_vars:
+        file: "{{ archive_cfg_path }}"
+        name: archive_cfg
+      when: archive_cfg_stat.stat.exists
+
+    - name: Resolve PostgreSQL password for upload and pass_or_fail
+      ansible.builtin.set_fact:
+        _pg_password: >-
+          {{
+            (
+              lookup(
+                'env',
+                (
+                  archive_cfg.postgresql.password_env_var | default('PGPASSWORD')
+                  if archive_cfg_stat.stat.exists
+                  else 'PGPASSWORD'
+                )
+              ) | default('', true) | trim
+            )
+            if (
+              lookup(
+                'env',
+                (
+                  archive_cfg.postgresql.password_env_var | default('PGPASSWORD')
+                  if archive_cfg_stat.stat.exists
+                  else 'PGPASSWORD'
+                )
+              ) | default('', true) | trim | length > 0
+            )
+            else (
+              archive_cfg.postgresql.password | default('') | string | trim
+              if archive_cfg_stat.stat.exists
+              else ''
+            )
+          }}
+      no_log: true
+
     - name: Check for pass_or_fail config
       ansible.builtin.stat:
         path: "{{ pass_or_fail_cfg_path }}"
@@ -200,10 +244,11 @@
           - --current-file
           - "{{ master_json_path }}"
       environment:
-        PGPASSWORD: "{{ lookup('env', pof_cfg.history.pg_password_env_var | default('PGPASSWORD')) | default('', true) }}"
+        PGPASSWORD: "{{ _pg_password }}"
       register: pass_or_fail_run
       failed_when: false
       changed_when: false
+      no_log: true
       when:
         - pass_or_fail_cfg_stat.stat.exists
         - not (cpt_establish_baseline | default(false) | bool)
@@ -236,17 +281,6 @@
           {% endif %}
       when:
         - pass_or_fail_cfg_stat.stat.exists or (cpt_establish_baseline | default(false) | bool)
-
-    - name: Check for archive config
-      ansible.builtin.stat:
-        path: "{{ archive_cfg_path }}"
-      register: archive_cfg_stat
-
-    - name: Load archive config
-      ansible.builtin.include_vars:
-        file: "{{ archive_cfg_path }}"
-        name: archive_cfg
-      when: archive_cfg_stat.stat.exists
 
     - name: Resolve artifact storage root
       ansible.builtin.set_fact:
@@ -293,6 +327,15 @@
         - _cpt_artifact_root | length > 0
         - _artifact_archive_enabled | bool
 
+    - name: Warn when PostgreSQL upload skipped (no password configured)
+      ansible.builtin.debug:
+        msg: >-
+          Skipping DB upload: set postgresql.password in archive_cfg.yaml or export
+          {{ archive_cfg.postgresql.password_env_var | default('PGPASSWORD') }}='...'.
+      when:
+        - archive_cfg_stat.stat.exists
+        - _pg_password | default('') | length == 0
+
     - name: Upload master JSON to PostgreSQL data table
       ansible.builtin.command:
         argv:
@@ -312,10 +355,13 @@
           - --password-env
           - "{{ archive_cfg.postgresql.password_env_var | default('PGPASSWORD') }}"
       environment:
-        PGPASSWORD: "{{ lookup('env', archive_cfg.postgresql.password_env_var | default('PGPASSWORD')) | default('', true) }}"
+        PGPASSWORD: "{{ _pg_password }}"
       register: db_upload_run
       changed_when: db_upload_run.rc == 0
-      when: archive_cfg_stat.stat.exists
+      no_log: true
+      when:
+        - archive_cfg_stat.stat.exists
+        - _pg_password | default('') | length > 0
 
     - name: Show master JSON path
       ansible.builtin.debug:

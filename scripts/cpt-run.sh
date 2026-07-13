@@ -168,7 +168,7 @@ Without --vu, all modes loop hammerdb_virtual_users_matrix from inventory.ini
 Use --vu N for a single benchmark only.
 
 Options (--rhel is required):
-  --rhel VERSION       Bench RHEL version for os-setup + benchmark (client stays on inventory), e.g. 9.0
+  --rhel VERSION       Bench RHEL for os-setup + benchmark (e.g. 9.0, 9.4, 10.2); compose mirror path follows major
   --hardware PROFILE   Hardware cohort tag (r640, r650, …) stored in master cpt_profile
   --label TEXT         Optional free-form profile label (e.g. team-a, staging)
   --vu N               Single VU only (skip matrix sweep)
@@ -210,13 +210,28 @@ inventory_var() {
 
 rhel_release_root() {
   local id="${1:?release id required}"
-  local prefix
+  local major="${id%%.*}" prefix mirror compose_name
   prefix="$(inventory_var os_prep_rhel_release_root_prefix)"
-  if [[ -z "$prefix" ]]; then
-    echo "error: set os_prep_rhel_release_root_prefix in inventory.ini [remote:vars]" >&2
+  compose_name="$(inventory_var os_prep_rhel_compose_name)"
+  if [[ -n "$prefix" ]]; then
+    if [[ -n "$compose_name" ]]; then
+      printf '%s/%s' "${prefix%/}" "$compose_name"
+    else
+      printf '%s/latest-RHEL-%s.0' "${prefix%/}" "$id"
+    fi
+    return
+  fi
+  mirror="$(inventory_var os_prep_rhel_release_mirror "https://download.eng.pnq.redhat.com")"
+  if [[ -z "$mirror" ]]; then
+    echo "error: set os_prep_rhel_release_mirror in inventory.ini [remote:vars]" >&2
     exit 1
   fi
-  printf '%s/latest-RHEL-%s.0' "${prefix%/}" "$id"
+  if [[ -n "$compose_name" ]]; then
+    printf '%s/rhel-%s/rel-eng/RHEL-%s/%s' "${mirror%/}" "$major" "$major" "$compose_name"
+  else
+    printf '%s/rhel-%s/rel-eng/RHEL-%s/latest-RHEL-%s.0' \
+      "${mirror%/}" "$major" "$major" "$id"
+  fi
 }
 
 # Return 0 when every [bench] host already reports the requested RHEL release

@@ -84,8 +84,12 @@ def main() -> int:
         return 2
 
     password = os.environ.get(args.password_env)
-    if password is None:
-        print(f"Environment variable {args.password_env} is not set", file=sys.stderr)
+    if not password or not str(password).strip():
+        print(
+            f"Environment variable {args.password_env} is not set or empty "
+            f"(export {args.password_env}='...' before upload)",
+            file=sys.stderr,
+        )
         return 2
 
     try:
@@ -100,6 +104,7 @@ def main() -> int:
         database=args.database,
         user=args.user,
         password=password,
+        gssencmode="disable",
     )
     try:
         if args.apply_grafana_views_only:

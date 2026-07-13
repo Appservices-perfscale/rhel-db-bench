@@ -1,0 +1,228 @@
+---
+# Major version change via Foreman re-provision + Badfish PXE reboot.
+#
+# Instead of in-place upgrade, this wipes and reinstalls the host with the
+# target OS through ScaleLab Foreman.  Flow:
+#   1. Set OS, media, ptable, and build=true on the Foreman host record.
+#   2. Use Badfish to set next-boot to PXE and power-cycle the host.
+#   3. Wait for the host to come back on the new OS.
+#
+# Required variables (set in inventory or passed via -e):
+#   os_prep_foreman_url        Foreman API v2 base URL
+#   os_prep_foreman_username   Foreman API user
+#   os_prep_foreman_password   Foreman API password
+#   os_prep_foreman_host_fqdn  Host FQDN as registered in Foreman (defaults to ansible_host)
+#   os_prep_foreman_os_title   Target OS title in Foreman (e.g. "RHEL 10.0"); auto-resolved
+#                              by os-prep-resolve-foreman-os.yaml when not set explicitly
+#   os_prep_badfish_host       BMC/iDRAC address for this host (e.g. mgmt-hostname.scalelab.redhat.com)
+#   os_prep_badfish_username   BMC credentials
+#   os_prep_badfish_password   BMC credentials
+#   os_prep_badfish_interfaces_yaml  Badfish NIC boot-order map (default: config/idrac_interfaces.yml)
+
+- name: Resolve Foreman rebuild parameters
+  ansible.builtin.set_fact:
+    _foreman_host_fqdn: >-
+      {{
+        (os_prep_foreman_host_fqdn | default('') | string | trim)
+        if (os_prep_foreman_host_fqdn | default('') | string | trim | length > 0)
+        else (ansible_host | default(inventory_hostname))
+      }}
+    _foreman_os_title: >-
+      {{
+        (os_prep_foreman_os_title | string | trim)
+        if (os_prep_foreman_os_title | default('') | string | trim | length > 0)
+        else ('RHEL ' ~ os_prep_rhel_release_id)
+      }}
+  changed_when: false
+
+- name: Show Foreman rebuild plan
+  ansible.builtin.debug:
+    msg: >-
+      Foreman rebuild: {{ _foreman_host_fqdn }} →
+      {{ _foreman_os_title }}
+      (Foreman: {{ os_prep_foreman_url }})
+
+- name: Validate resolved Foreman OS title
+  ansible.builtin.assert:
+    that:
+      - _foreman_os_title | string | trim | length > 0
+    fail_msg: >-
+      Foreman OS title resolved to empty. Set os_prep_foreman_os_title
+      (e.g. "RHEL 10.0") or ensure os_prep_rhel_release_id is defined.
+  changed_when: false
+
+- name: Validate required Foreman variables
+  ansible.builtin.assert:
+    that:
+      - os_prep_foreman_url is defined and os_prep_foreman_url | string | trim | length > 0
+      - os_prep_foreman_username is defined and os_prep_foreman_username | string | trim | length > 0
+      - os_prep_foreman_password is defined and os_prep_foreman_password | string | trim | length > 0
+    fail_msg: >-
+      Foreman rebuild requires os_prep_foreman_url, os_prep_foreman_username,
+      and os_prep_foreman_password. Set them in inventory [remote:vars] or pass via -e.
+  changed_when: false
+
+- name: Validate required Badfish variables
+  ansible.builtin.assert:
+    that:
+      - os_prep_badfish_host is defined and os_prep_badfish_host | string | trim | length > 0
+      - os_prep_badfish_username is defined and os_prep_badfish_username | string | trim | length > 0
+      - os_prep_badfish_password is defined and os_prep_badfish_password | string | trim | length > 0
+    fail_msg: >-
+      Foreman rebuild requires os_prep_badfish_host, os_prep_badfish_username,
+      and os_prep_badfish_password for out-of-band PXE boot.
+  changed_when: false
+
+# ── Step 1: Configure host in Foreman for rebuild ──────────────────────
+
+- name: Set OS, media, ptable, and build flag via Foreman API
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../scripts/foreman_rebuild.py"
+      - --url
+      - "{{ os_prep_foreman_url }}"
+      - --user
+      - "{{ os_prep_foreman_username }}"
+      - --password
+      - "{{ os_prep_foreman_password }}"
+      - --host
+      - "{{ _foreman_host_fqdn }}"
+      - --os
+      - "{{ _foreman_os_title }}"
+  delegate_to: localhost
+  become: false
+  register: _foreman_rebuild_result
+  changed_when: true
+  no_log: "{{ os_prep_foreman_no_log | default(true) | bool }}"
+
+- name: Parse Foreman rebuild result
+  ansible.builtin.set_fact:
+    _foreman_rebuild: "{{ _foreman_rebuild_result.stdout | from_json }}"
+  changed_when: false
+
+- name: Fail if Foreman rebuild returned an error
+  ansible.builtin.assert:
+    that:
+      - _foreman_rebuild.error is not defined
+    fail_msg: "Foreman rebuild failed: {{ _foreman_rebuild.error | default('unknown') }}"
+  changed_when: false
+
+- name: Show Foreman rebuild result
+  ansible.builtin.debug:
+    msg: >-
+      Foreman host {{ _foreman_rebuild.host }} set to OS={{ _foreman_rebuild.os_title }},
+      medium={{ _foreman_rebuild.medium }}, ptable={{ _foreman_rebuild.ptable }}, build=true
+
+# ── Step 2: PXE boot via Badfish ───────────────────────────────────────
+
+- name: Set next boot to PXE via Badfish
+  ansible.builtin.command:
+    argv:
+      - badfish
+      - -H
+      - "{{ os_prep_badfish_host }}"
+      - -u
+      - "{{ os_prep_badfish_username }}"
+      - -p
+      - "{{ os_prep_badfish_password }}"
+      - -i
+      - "{{ os_prep_badfish_interfaces_yaml | default(playbook_dir ~ '/../config/idrac_interfaces.yml') }}"
+      - --boot-to-type
+      - foreman
+      - --pxe
+  delegate_to: localhost
+  become: false
+  register: _badfish_pxe
+  changed_when: true
+  no_log: "{{ os_prep_foreman_no_log | default(true) | bool }}"
+
+- name: Power cycle host via Badfish
+  ansible.builtin.command:
+    argv:
+      - badfish
+      - -H
+      - "{{ os_prep_badfish_host }}"
+      - -u
+      - "{{ os_prep_badfish_username }}"
+      - -p
+      - "{{ os_prep_badfish_password }}"
+      - --power-cycle
+  delegate_to: localhost
+  become: false
+  register: _badfish_power
+  changed_when: true
+  no_log: "{{ os_prep_foreman_no_log | default(true) | bool }}"
+
+# ── Step 3: Wait for rebuild to complete ───────────────────────────────
+
+- name: Remove stale SSH host keys after rebuild
+  ansible.builtin.command:
+    cmd: ssh-keygen -R {{ item }}
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  failed_when: false
+  loop:
+    - "{{ ansible_host | default(inventory_hostname) }}"
+    - "{{ _foreman_host_fqdn }}"
+
+- name: Clear stale Ansible SSH control sockets
+  ansible.builtin.shell: rm -f ~/.ansible/cp/*
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  failed_when: false
+
+- name: Wait before first SSH attempt after PXE boot
+  ansible.builtin.pause:
+    seconds: "{{ os_prep_foreman_rebuild_delay | default(300) | int }}"
+
+- name: Wait for SSH password authentication after Foreman rebuild
+  ansible.builtin.command:
+    argv:
+      - sshpass
+      - -e
+      - ssh
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - PubkeyAuthentication=no
+      - -o
+      - PreferredAuthentications=password
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - ConnectTimeout=15
+      - -T
+      - "root@{{ ansible_host | default(inventory_hostname) }}"
+      - echo
+      - OK
+  environment:
+    SSHPASS: "{{ ansible_ssh_pass }}"
+  delegate_to: localhost
+  become: false
+  register: _ssh_auth_test
+  retries: "{{ os_prep_foreman_rebuild_ssh_retries | default(85) | int }}"
+  delay: "{{ os_prep_foreman_rebuild_ssh_retry_delay | default(60) | int }}"
+  until: _ssh_auth_test.rc == 0
+  changed_when: false
+  no_log: "{{ os_prep_foreman_no_log | default(true) | bool }}"
+
+- name: Reset SSH connection for rebuilt host
+  ansible.builtin.meta: reset_connection
+
+- name: Clear facts cached from pre-rebuild OS
+  ansible.builtin.meta: clear_facts
+
+- name: Force Python interpreter rediscovery on rebuilt host
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: auto_silent
+
+- name: Post-rebuild status
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Foreman rebuild complete, SSH verified.
+      OS verification continues in the post-rebuild play.

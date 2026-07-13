@@ -1,13 +1,11 @@
 ---
 # Pin remote hosts to a specific RHEL build, distro-sync, reboot, and write facts.json.
 #
+# Same major (e.g. 9.4 → 9.7): dnf distro-sync against rel-eng / ScaleLab compose.
+# Different major (e.g. 9.x → 10.x): Foreman re-provision via PXE (Badfish power-cycle).
+#
 # Targets [remote] (bench + client). Use --limit to choose which hosts to change:
 #   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini --limit bench
-#   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini --limit client
-#   ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini
-#
-# Per-group RHEL build URLs and expected release IDs live in inventory.ini
-# ([bench:vars] and [client:vars]). Shared knobs are under [remote:vars].
 #
 # Run before playbooks/setup.yaml on fresh or reprovisioned hosts.
 
@@ -29,25 +27,14 @@
       ansible.builtin.meta: end_host
       when: not (os_prep_enable | default(true) | bool)
 
-    - name: Require os_prep_rhel_release_root_prefix for this host
+    - name: Require compose mirror, prefix, or override for this host
       ansible.builtin.assert:
         that:
-          - os_prep_rhel_release_root_prefix is defined
-          - os_prep_rhel_release_root_prefix | string | trim | length > 0
+          - (os_prep_rhel_release_root_override | default('') | string | trim | length > 0)
+            or (os_prep_rhel_release_root_prefix | default('') | string | trim | length > 0)
+            or (os_prep_rhel_release_mirror | default('') | string | trim | length > 0)
         fail_msg: >-
-          Set os_prep_rhel_release_root_prefix under [remote:vars] in inventory.ini
-          (compose URL is derived from os_prep_rhel_release_id unless
-          os_prep_rhel_release_root_override is set).
-      changed_when: false
-
-    - name: Require derived os_prep_rhel_release_root for this host
-      ansible.builtin.assert:
-        that:
-          - os_prep_rhel_release_root is defined
-          - os_prep_rhel_release_root | string | trim | length > 0
-        fail_msg: >-
-          Could not derive os_prep_rhel_release_root for {{ inventory_hostname }}.
-          Set os_prep_rhel_release_id (e.g. 9.4) or os_prep_rhel_release_root_override.
+          Set os_prep_rhel_release_mirror under [remote:vars] in inventory.ini.
       changed_when: false
 
     - name: Require os_prep_rhel_release_id for this host
@@ -56,114 +43,60 @@
           - os_prep_rhel_release_id is defined
           - os_prep_rhel_release_id | string | trim | length > 0
         fail_msg: >-
-          Set os_prep_rhel_release_id for {{ inventory_hostname }}.
-          Bench: bench_rhel_release_id_default in inventory or -e bench_rhel_release_id=9.4.
-          Client: os_prep_rhel_release_id in [client:vars].
+          Set os_prep_rhel_release_id (bench: -e bench_rhel_release_id=10.2 or inventory default).
       changed_when: false
 
-    - name: Show OS prep target for this host
+    - name: Detect current and target OS major
+      ansible.builtin.set_fact:
+        os_prep_current_major: "{{ ansible_facts.distribution_major_version | string }}"
+        os_prep_target_major: "{{ _os_prep_rhel_major }}"
+        os_prep_major_upgrade_needed: >-
+          {{ (ansible_facts.distribution_major_version | string) != (_os_prep_rhel_major | string) }}
+        os_prep_post_foreman_distro_sync_needed: false
+      changed_when: false
+
+    - name: Resolve Foreman install OS for major upgrade
+      when: os_prep_major_upgrade_needed | bool
+      ansible.builtin.include_tasks: tasks/os-prep-resolve-foreman-os.yaml
+
+    - name: Show OS prep plan
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }}: syncing to {{ os_prep_rhel_release_root }}
-          (expect release id {{ os_prep_rhel_release_id }})
+          {{ inventory_hostname }}: current RHEL {{ ansible_facts.distribution_version }}
+          → target {{ os_prep_rhel_release_id }}
+          ({% if os_prep_major_upgrade_needed | bool %}Foreman rebuild
+          {{ os_prep_current_major }}→{{ _foreman_os_resolve.foreman_release_id | default(os_prep_target_major) }}
+          {%- if os_prep_post_foreman_distro_sync_needed | bool -%}
+          , then distro-sync to {{ os_prep_rhel_release_id }}
+          {%- endif -%}
+          {% else %}distro-sync {{ os_prep_rhel_release_root }}{% endif %})
 
-    - name: List existing yum repository files
-      ansible.builtin.find:
-        paths: /etc/yum.repos.d
-        patterns: "*.repo"
-        file_type: file
-      register: os_prep_old_repos
+    - name: Stop services and remove provisioned packages
+      when: not (os_prep_major_upgrade_needed | bool)
+      ansible.builtin.include_tasks: tasks/os-prep-remove-provisioned-packages.yaml
 
-    - name: Remove existing yum repository files
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ os_prep_old_repos.files }}"
-      loop_control:
-        label: "{{ item.path | basename }}"
+    - name: Major version change via Foreman rebuild
+      when: os_prep_major_upgrade_needed | bool
+      ansible.builtin.include_tasks: tasks/os-prep-foreman-rebuild.yaml
 
-    - name: Install BaseOS and AppStream repository definitions
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../templates/os-prep-rhel.repo.j2"
-        dest: /etc/yum.repos.d/os-prep-rhel.repo
-        owner: root
-        group: root
-        mode: "0644"
+    - name: Stop services and remove provisioned packages before post-Foreman distro-sync
+      when: os_prep_post_foreman_distro_sync_needed | default(false) | bool
+      ansible.builtin.include_tasks: tasks/os-prep-remove-provisioned-packages.yaml
 
-    - name: Pin DNF releasever to inventory RHEL minor
-      ansible.builtin.copy:
-        dest: /etc/dnf/vars/releasever
-        content: "{{ os_prep_rhel_release_id }}\n"
-        owner: root
-        group: root
-        mode: "0644"
+    - name: Distro-sync to target release after Foreman rebuild
+      when: os_prep_post_foreman_distro_sync_needed | default(false) | bool
+      ansible.builtin.include_tasks: tasks/os-prep-distro-sync.yaml
 
-    - name: Clean DNF metadata
-      ansible.builtin.command: dnf clean all
-      changed_when: true
-
-    - name: Stop services before OS version pin
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: stopped
-      loop: "{{ os_prep_stop_services | default(['postgresql-' ~ (postgresql_major | default(17) | string), 'pmcd']) }}"
-      failed_when: false
-
-    - name: List installed RPM names
-      ansible.builtin.command: rpm -qa --qf '%{NAME}\n'
-      register: os_prep_installed_rpms
-      changed_when: false
-      when: os_prep_remove_provisioned_packages | default(true) | bool
-
-    - name: Select PostgreSQL, PGDG, and PCP packages to remove before distro-sync
-      ansible.builtin.set_fact:
-        os_prep_packages_to_remove: >-
-          {{
-            os_prep_installed_rpms.stdout_lines
-            | select('match', '^(postgresql|pgdg-redhat-repo|pcp)')
-            | list
-          }}
-      when: os_prep_remove_provisioned_packages | default(true) | bool
-
-    - name: Remove provisioned packages not in the target RHEL compose
-      ansible.builtin.dnf:
-        name: "{{ os_prep_packages_to_remove }}"
-        state: absent
-        disable_plugin: subscription-manager
-      when:
-        - os_prep_remove_provisioned_packages | default(true) | bool
-        - os_prep_packages_to_remove | default([]) | length > 0
-
-    - name: Distro-sync to the configured RHEL tree
-      ansible.builtin.command: >-
-        dnf -y --disableplugin=subscription-manager distro-sync --allowerasing
-      register: os_prep_distro_sync
-      changed_when: os_prep_distro_sync.rc == 0
-
-    - name: Read installed redhat-release before reboot
-      ansible.builtin.command: rpm -q redhat-release
-      register: os_prep_redhat_release_pre
-      changed_when: false
-
-    - name: Confirm redhat-release matches requested id before reboot
-      ansible.builtin.assert:
-        that:
-          - os_prep_rhel_release_id | string in os_prep_redhat_release_pre.stdout
-        fail_msg: >-
-          Expected '{{ os_prep_rhel_release_id }}' in redhat-release output;
-          got: {{ os_prep_redhat_release_pre.stdout }}
-      changed_when: false
-
-    - name: Reboot to run the synced kernel
-      ansible.builtin.reboot:
-        reboot_timeout: "{{ os_prep_reboot_timeout | default(1800) | int }}"
-        test_command: uptime
+    - name: Same-major pin via distro-sync
+      when: not (os_prep_major_upgrade_needed | bool)
+      ansible.builtin.include_tasks: tasks/os-prep-distro-sync.yaml
 
 - name: Collect facts after reboot and write facts.json (remote)
   hosts: remote
   gather_facts: true
   serial: 1
   vars:
+    ansible_python_interpreter: auto_silent
     _os_prep_facts_dir: >-
       {{
         (perf_results_path | default('') | string | trim | length > 0)
@@ -177,17 +110,17 @@
       ansible.builtin.meta: end_host
       when: not (os_prep_enable | default(true) | bool)
 
-    - name: Read redhat-release after reboot
+    - name: Read redhat-release after OS prep
       ansible.builtin.command: rpm -q redhat-release
       register: os_prep_redhat_release_post
       changed_when: false
 
-    - name: Confirm redhat-release after reboot
+    - name: Confirm redhat-release after OS prep
       ansible.builtin.assert:
         that:
           - os_prep_rhel_release_id | string in os_prep_redhat_release_post.stdout
         fail_msg: >-
-          After reboot, expected '{{ os_prep_rhel_release_id }}' in redhat-release;
+          After OS prep, expected '{{ os_prep_rhel_release_id }}' in redhat-release;
           got: {{ os_prep_redhat_release_post.stdout }}
       changed_when: false
 

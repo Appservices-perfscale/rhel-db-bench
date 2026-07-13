@@ -23,3 +23,9 @@ preferred_models:
 
 # Optional: pin exact hostnames (overrides preferred_models). Bench first, client second.
 # schedule_servers: "f24-h07-000-r630.rdu2.scalelab.redhat.com,f24-h08-000-r630.rdu2.scalelab.redhat.com"
+
+# Foreman URL for major RHEL version rebuilds (e.g. 9→10).
+# Credentials are auto-derived from the QUADS assignment:
+#   username = cloud name (e.g. cloud42), password = rdu2@<ticket_number>.
+# Override the URL if your ScaleLab Foreman is at a different address.
+foreman_url: "http://foreman.rdu2.scalelab.redhat.com/api/v2"

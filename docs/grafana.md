@@ -1,25 +1,32 @@
-# Grafana dashboard — DB-CPT-RHEL regression (simple)
+# Grafana dashboard — DB-CPT-RHEL
 
-Minimal dashboard: **REGRESSION** (red) or **NO REGRESSION** (green) when comparing
-a newer RHEL against an older baseline (same hardware + virtual users).
+Compare CPT benchmark results across two RHEL bench versions (Pipelines-style layout).
 
 ## Import
 
 1. **Dashboards → New → Import**
 2. Upload `grafana/dashboards/db-cpt-rhel-overview.json`
-3. Map **DS_POSTGRESQL** to your PostgreSQL datasource
+3. Map the PostgreSQL datasource (UID `dekgyz85doxdse` in the export, or your own)
 4. **Import** (overwrite if replacing an older version)
 
-## Use
+## Filters
 
-| Filter | Example |
-|--------|---------|
-| Baseline RHEL | `9.0` (reference) |
-| Compare RHEL | `9.4` (under test) |
-| Hardware | **All** if runs are `UNKNOWN` |
-| Virtual users | **All** or `112` |
+| Filter | Role |
+|--------|------|
+| **Baseline RHEL (version 1)** | Reference bench release (e.g. `9.0`) |
+| **Compare RHEL (version 2)** | Release under test (e.g. `9.7`) |
+| **Virtual users** | Load level(s); **All** shows every VU as a separate series |
+| **Hardware** | Bench hardware profile (`R650`, etc.) |
+| **RHEL family** | `RHEL9`, `RHEL8`, … |
 
-**Total runs** must be > 0. If zero, upload data first (see below).
+## Layout (top to bottom)
+
+| Section | What it shows |
+|---------|----------------|
+| **Benchmark results over time** | Side-by-side time series per version: NOPM, TPM, pass/fail (one line per VU) — same pattern as the Pipelines Performance Comparison dashboard |
+| **RHEL comparison by virtual users (latest run per VU)** | Bar charts using `DISTINCT ON (virtual_users, bench_rhel_release)` to pick the **most recent run** per VU per version |
+| **PostgreSQL SUT / HammerDB client** | PCP monitoring from archived runs |
+| **Pass / fail and run history** | Aggregate results and full run table |
 
 ## Upload data
 
@@ -29,23 +36,11 @@ python3 scripts/upload_db_cpt_result.py results/.../YOUR-master.json \
   --host HOST --database DATABASE --user USER --table db_cpt_rhel_data
 ```
 
-Each upload refreshes `db_cpt_rhel_runs_v` automatically. To update the view only
-(e.g. after importing a new dashboard):
+Each upload refreshes `db_cpt_rhel_runs_v` automatically. To update the view only:
 
 ```bash
 python3 scripts/upload_db_cpt_result.py --apply-grafana-views-only \
   --host HOST --database DATABASE --user USER
 ```
 
-## Panels
-
-| Panel | Meaning |
-|-------|---------|
-| **RHEL comparison by virtual users** | Side-by-side bars: NOPM, TPM, max CPU, and avg read IOPS vs VU for **Baseline RHEL** vs **Compare RHEL** (blue / red) |
-| Big status | **REGRESSION** / **NO REGRESSION** / **NO DATA** |
-| Latest on Compare RHEL | NOPM on newest run of version under test |
-| Best on Baseline RHEL | Best NOPM on reference version |
-| OPL | Pipeline pass/fail from `compare` runs (optional) |
-| Table | Each RHEL row vs baseline |
-
-Dashboard UID: `db-cpt-rhel-overview`
+Dashboard UID: `db-cpt-rhel`

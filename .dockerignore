@@ -1,0 +1,23 @@
+# Secrets and local runtime config (mount at container run time).
+inventory.local.ini
+quads_cfg.yaml
+pass_or_fail_cfg.yaml
+archive_cfg.yaml
+scalelab_assignment.yml
+
+# Ansible / Python artifacts
+collections/
+.ansible/
+*.retry
+__pycache__/
+*.pyc
+.venv/
+
+# Benchmark output
+results/
+
+# VCS / editor
+.git/
+.gitignore
+.vscode/
+*.swp
