@@ -1,0 +1,75 @@
+---
+# Wait until all scheduled ScaleLab hosts are SSH-reachable.
+#
+# QUADS self-scheduling returns immediately, but hosts may take 30–60 minutes
+# to be provisioned and respond to SSH.  This playbook polls SSH with password
+# authentication until every host in [remote] answers or the timeout expires.
+#
+# From project root:
+#   ansible-playbook playbooks/wait-for-scalelab-hosts.yaml -i inventory.ini -i inventory.local.ini
+#
+# Optional overrides:
+#   -e wait_ssh_timeout=5400       max seconds to wait (default: 5400 = 90 min)
+#   -e wait_ssh_retry_delay=60     seconds between retries (default: 60)
+
+- name: Wait for ScaleLab hosts to become SSH-reachable
+  hosts: remote
+  gather_facts: false
+  become: false
+  serial: "100%"
+
+  vars:
+    wait_ssh_timeout: 5400
+    wait_ssh_retry_delay: 60
+
+  tasks:
+    - name: Calculate retry count from timeout and delay
+      ansible.builtin.set_fact:
+        _wait_ssh_retries: "{{ ((wait_ssh_timeout | int) / (wait_ssh_retry_delay | int)) | int }}"
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    - name: Show wait parameters
+      ansible.builtin.debug:
+        msg: >-
+          Waiting up to {{ wait_ssh_timeout }}s ({{ _wait_ssh_retries }} retries × {{ wait_ssh_retry_delay }}s)
+          for SSH on {{ ansible_host | default(inventory_hostname) }}
+      run_once: true
+
+    - name: Poll SSH password authentication
+      ansible.builtin.command:
+        argv:
+          - sshpass
+          - -e
+          - ssh
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - PubkeyAuthentication=no
+          - -o
+          - PreferredAuthentications=password
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - ConnectTimeout=15
+          - -T
+          - "root@{{ ansible_host | default(inventory_hostname) }}"
+          - echo
+          - OK
+      environment:
+        SSHPASS: "{{ ansible_ssh_pass }}"
+      delegate_to: localhost
+      become: false
+      register: _ssh_poll
+      retries: "{{ _wait_ssh_retries | int }}"
+      delay: "{{ wait_ssh_retry_delay | int }}"
+      until: _ssh_poll.rc == 0
+      changed_when: false
+      no_log: true
+
+    - name: Host is reachable
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host | default(inventory_hostname) }}): SSH OK"

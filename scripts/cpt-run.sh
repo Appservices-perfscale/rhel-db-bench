@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # DB-CPT-RHEL single-shot entrypoint — runs the full benchmark pipeline:
-#   os-setup.yaml → setup.yaml (fallback: setup_EL9.yaml) → site.yml (per VU) → cleanup.yaml
+#   [auto-schedule → wait-for-hosts →] os-setup → setup → site.yml (per VU) → cleanup [→ scalelab-cleanup]
 #
-# Auto-schedule and scale-lab cleanup are separate and NOT part of this pipeline.
-#
-# Prerequisites: inventory.local.ini with bench/client hosts,
+# Prerequisites: inventory.local.ini with bench/client hosts (or --schedule to create it),
 # pass_or_fail_cfg.yaml + archive_cfg.yaml (or CPT_ARTIFACT_ROOT on Jenkins), PGPASSWORD set.
 #
 # Examples:
@@ -13,6 +11,10 @@
 #   ./scripts/cpt-run.sh compare  --rhel 9.0 --vu 112
 #   ./scripts/cpt-run.sh matrix   --rhel 9.0
 #   ./scripts/cpt-run.sh baseline --rhel 9.0 --skip-os-setup --skip-setup
+#
+# End-to-end (schedule → benchmark → release):
+#   ./scripts/cpt-run.sh compare --rhel 9.4 --hardware r650 \
+#     --schedule --workload-name 'DB-CPT nightly' --scalelab-cleanup
 
 set -euo pipefail
 
@@ -30,10 +32,43 @@ CPT_CLEANUP="${CPT_CLEANUP:-${MATRIX_CLEANUP:-true}}"
 SKIP_OS_SETUP="${SKIP_OS_SETUP:-false}"
 SKIP_SETUP="${SKIP_SETUP:-false}"
 INVENTORY_LOCAL="${INVENTORY_LOCAL:-inventory.local.ini}"
+DO_SCHEDULE="${DO_SCHEDULE:-false}"
+WORKLOAD_NAME="${WORKLOAD_NAME:-}"
+DO_SCALELAB_CLEANUP="${DO_SCALELAB_CLEANUP:-false}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-5400}"
 EXTRA=()
 ANSIBLE_ARGS=()
 
 # ── Pipeline stage runners ──────────────────────────────────────────────
+
+run_schedule() {
+  if [[ "$DO_SCHEDULE" != "true" ]]; then
+    return 0
+  fi
+  if [[ -z "$WORKLOAD_NAME" ]]; then
+    echo "error: --workload-name is required when using --schedule" >&2
+    exit 1
+  fi
+  echo "---------- Auto-schedule: reserving ScaleLab hosts ----------"
+  ansible-playbook playbooks/auto-schedule.yaml \
+    -e "workload_name=${WORKLOAD_NAME}" \
+    "${EXTRA[@]}"
+
+  echo "---------- Waiting for hosts (timeout ${WAIT_TIMEOUT}s) ----------"
+  ansible-playbook playbooks/wait-for-scalelab-hosts.yaml \
+    -i inventory.ini -i "$INVENTORY_LOCAL" \
+    -e "wait_ssh_timeout=${WAIT_TIMEOUT}" \
+    "${EXTRA[@]}"
+  echo "---------- All hosts SSH-reachable ----------"
+}
+
+run_scalelab_cleanup() {
+  if [[ "$DO_SCALELAB_CLEANUP" != "true" ]]; then
+    return 0
+  fi
+  echo "---------- ScaleLab cleanup: releasing hosts ----------"
+  ansible-playbook playbooks/scalelab-cleanup.yaml "${EXTRA[@]}" || true
+}
 
 run_os_setup() {
   if [[ "$SKIP_OS_SETUP" == "true" ]]; then
@@ -152,11 +187,13 @@ Usage:
   cpt-run.sh matrix   [options] [-- extra ansible-playbook args...]
 
 Full pipeline (per invocation):
+  0. auto-schedule      — (optional) reserve ScaleLab hosts via QUADS + wait for SSH
   1. os-setup.yaml      — pin RHEL, distro-sync, reboot, write facts.json
                           (skipped when bench already reports --rhel, or --skip-os-setup)
   2. setup.yaml         — provision bench + client (fallback: setup_EL9.yaml)
   3. site.yml (per VU)  — benchmark + master JSON + pass/fail + upload
   4. cleanup.yaml       — reset benchmark state between VU iterations
+  5. scalelab-cleanup   — (optional) release ScaleLab hosts
 
 Modes:
   baseline  For each VU in hammerdb_virtual_users_matrix: site.yml (seed baseline), cleanup.yaml.
@@ -176,6 +213,13 @@ Options (--rhel is required):
   --repeats N          Repeats per VU (default: inventory hammerdb_matrix_run_count or 1)
   --skip-os-setup      Force-skip os-setup.yaml (bench hosts already pinned to correct RHEL)
   --skip-setup         Skip setup.yaml (bench + client already provisioned)
+
+ScaleLab scheduling:
+  --schedule           Run auto-schedule.yaml before the pipeline (requires quads_cfg.yaml)
+  --workload-name TEXT QUADS assignment description (required with --schedule)
+  --scalelab-cleanup   Run scalelab-cleanup.yaml after the pipeline (releases hosts)
+  --wait-timeout SECS  Max seconds to wait for hosts after scheduling (default: 5400 = 90 min)
+
   -h, --help           Show this help
 
 Environment:
@@ -184,6 +228,10 @@ Environment:
   CPT_CLEANUP          Run cleanup.yaml after each site.yml (default: true)
   SKIP_OS_SETUP        Same as --skip-os-setup (default: false)
   SKIP_SETUP           Same as --skip-setup (default: false)
+  DO_SCHEDULE          Same as --schedule (default: false)
+  DO_SCALELAB_CLEANUP  Same as --scalelab-cleanup (default: false)
+  WORKLOAD_NAME        Same as --workload-name
+  WAIT_TIMEOUT         Same as --wait-timeout (default: 5400)
 
 Examples:
   ./scripts/cpt-run.sh baseline --rhel 9.0
@@ -191,6 +239,10 @@ Examples:
   ./scripts/cpt-run.sh compare  --rhel 9.0 --vu 112
   ./scripts/cpt-run.sh baseline --rhel 9.0 --vus 112,224
   ./scripts/cpt-run.sh baseline --rhel 9.0 --skip-os-setup --skip-setup
+
+  # End-to-end: schedule hosts, benchmark, release hosts
+  ./scripts/cpt-run.sh compare --rhel 9.4 --hardware r650 \
+    --schedule --workload-name 'DB-CPT nightly' --scalelab-cleanup
 EOF
 }
 
@@ -313,6 +365,22 @@ while [[ $# -gt 0 ]]; do
       SKIP_SETUP=true
       shift
       ;;
+    --schedule)
+      DO_SCHEDULE=true
+      shift
+      ;;
+    --workload-name)
+      WORKLOAD_NAME="${2:?--workload-name requires a value}"
+      shift 2
+      ;;
+    --scalelab-cleanup)
+      DO_SCALELAB_CLEANUP=true
+      shift
+      ;;
+    --wait-timeout)
+      WAIT_TIMEOUT="${2:?--wait-timeout requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -341,21 +409,29 @@ fi
 
 RHEL_RELEASE_ROOT="$(rhel_release_root "$RHEL")"
 
+if [[ "$MODE" == matrix ]]; then
+  MODE=compare
+fi
+
+# ── Phase 0: ScaleLab scheduling (optional) ────────────────────────────
+
+run_schedule
+
+# Release hosts on exit if --scalelab-cleanup was requested (even on failure).
+if [[ "$DO_SCALELAB_CLEANUP" == "true" ]]; then
+  trap 'run_scalelab_cleanup' EXIT
+fi
+
+# Rebuild ANSIBLE_ARGS now that inventory.local.ini may have been created.
 ANSIBLE_ARGS=(-i inventory.ini)
 if [[ -f "$INVENTORY_LOCAL" ]]; then
   ANSIBLE_ARGS+=(-i "$INVENTORY_LOCAL")
 fi
-
 ANSIBLE_ARGS+=(-e "bench_rhel_release_id=${RHEL}")
 [[ -n "$HARDWARE" ]] && ANSIBLE_ARGS+=(-e "cpt_hardware_profile=${HARDWARE}")
 [[ -n "$LABEL" ]] && ANSIBLE_ARGS+=(-e "cpt_profile_label=${LABEL}")
-
 if [[ "$MODE" == baseline ]]; then
   ANSIBLE_ARGS+=(-e cpt_establish_baseline=true)
-fi
-
-if [[ "$MODE" == matrix ]]; then
-  MODE=compare
 fi
 
 # ── Phase 1 & 2: OS setup + provisioning (run once) ────────────────────

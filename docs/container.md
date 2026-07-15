@@ -62,9 +62,47 @@ podman run --rm \
   compare --rhel 9.4 --hardware r650
 ```
 
-On Jenkins, set `CPT_ARTIFACT_ROOT` and mount it similarly to the loadtest probe
-job pattern (container provides the toolchain; the job supplies inventory,
-credentials, and artifact paths).
+## Jenkins (HCEPERF-1487)
+
+`Jenkinsfile.groovy` defines the pipeline and `jenkins/DbCptRhelJob.groovy`
+provides the matching JOBDSL definition.  Both follow the same two-container
+pod pattern used by the loadtest probe jobs (compute + jnlp sidecar on a
+shared PVC).
+
+### Required Jenkins credentials
+
+| Credential ID | Type | Contents |
+|---------------|------|----------|
+| `db-cpt-rhel-inventory` | Secret file | `inventory.local.ini` (bench/client hosts + SSH passwords) |
+| `db-cpt-rhel-pass-or-fail` | Secret file | `pass_or_fail_cfg.yaml` (regression DB config) |
+| `db-cpt-rhel-archive-cfg` | Secret file | `archive_cfg.yaml` (result upload + artifact storage) |
+| `db-cpt-rhel-pgpassword` | Secret text | `PGPASSWORD` for pass\_or\_fail and upload scripts |
+
+### Job parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MODE` | `compare` | `baseline`, `compare`, or `matrix` |
+| `RHEL_VERSION` | `9.4` | Bench RHEL for os-setup + benchmark |
+| `HARDWARE` | `r650` | Hardware cohort tag |
+| `VUS` | *(empty)* | Override VU list; empty = inventory matrix |
+| `SKIP_OS_SETUP` | `false` | Skip os-setup when hosts are already pinned |
+| `SKIP_SETUP` | `false` | Skip provisioning when hosts are already set up |
+| `CONTAINER_IMAGE` | `quay.io/rhcloudperfscale/db-cpt-rhel:latest` | Controller image |
+
+### Onboarding the job in ci-configs
+
+Copy `jenkins/DbCptRhelJob.groovy` into the
+[ci-configs](https://gitlab.cee.redhat.com/redhat-performance/ci-configs)
+repository at `src/jobs/DbCptRhelJob.groovy`.  After the seed job runs, the
+`DB-CPT-RHEL` pipeline appears in Jenkins and reads `Jenkinsfile.groovy` from
+the `main` branch.
+
+### Running
+
+Trigger manually from the Jenkins UI with the desired parameters, or add a
+`cron('...')` trigger in `Jenkinsfile.groovy` for nightly runs.  Benchmark
+results are archived under `artifacts/` in each build.
 
 ## Konflux (HCEPERF-1517)
 

@@ -32,6 +32,7 @@ trap 'rm -f inventory.local.ini quads_cfg.yaml' EXIT
 INVENTORY=(-i inventory.ini -i inventory.local.ini)
 PLAYBOOKS=(
   playbooks/auto-schedule.yaml
+  playbooks/wait-for-scalelab-hosts.yaml
   playbooks/os-setup.yaml
   playbooks/setup.yaml
   playbooks/setup_EL9.yaml

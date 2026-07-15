@@ -88,7 +88,7 @@ ansible-playbook playbooks/scalelab-cleanup.yaml
 | [docs/test-logic.md](docs/test-logic.md) | Benchmark flow, PostgreSQL tuning rationale, PCP metrics |
 | [docs/site.md](docs/site.md) | Full pipeline: test + master JSON assembly |
 | [docs/cpt-developer.md](docs/cpt-developer.md) | Baseline vs compare runs, CPT profiles, `cpt-run.sh` |
-| [docs/container.md](docs/container.md) | Container image build, Quay publish, Konflux links |
+| [docs/container.md](docs/container.md) | Container image build, Quay publish, Jenkins job, Konflux links |
 | [docs/cleanup.md](docs/cleanup.md) | Reset between benchmark runs |
 | [docs/scalelab-cleanup.md](docs/scalelab-cleanup.md) | Release ScaleLab hosts after testing |
 
@@ -120,6 +120,8 @@ DB-CPT-RHEL/
 ├── scripts/                     Helper scripts (PCP log → JSON)
 ├── group_vars/                  Per-group Ansible variables
 ├── docs/                        Documentation
+├── Jenkinsfile.groovy           Jenkins pipeline (HCEPERF-1487)
+├── jenkins/                     JOBDSL definitions for ci-configs
 └── results/                     Benchmark output (JSON, logs, archives)
 ```
 
