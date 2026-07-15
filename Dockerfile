@@ -31,7 +31,7 @@ WORKDIR ${DB_CPT_RHEL_ROOT}
 
 # Dependency manifests first for better layer caching.
 COPY requirements.yml requirements.txt ansible.cfg inventory.ini inventory.local.ini.example quads_cfg.yaml.example ./
-RUN ansible-galaxy collection install -r requirements.yml -p ./collections
+RUN ansible-galaxy collection install --ignore-certs -r requirements.yml -p ./collections
 
 COPY playbooks/ playbooks/
 COPY templates/ templates/
