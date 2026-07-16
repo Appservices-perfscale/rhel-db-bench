@@ -10,7 +10,7 @@ PostgreSQL or HammerDB — those stay on the bare-metal targets.
 | Registry | Image |
 |----------|-------|
 | Public (manual publish) | `quay.io/rhcloudperfscale/db-cpt-rhel` |
-| Konflux build workspace | `quay.io/rhcloudperfscale/db-cpt-rhel:on-pr-{{revision}}` |
+| Konflux build workspace | `quay.io/redhat-user-workloads/hcc-perfscale-tenant/db-cpt-rhel` |
 
 Create the `rhcloudperfscale/db-cpt-rhel` repository on [quay.io](https://quay.io/organization/rhcloudperfscale) before the first push.
 
@@ -119,7 +119,7 @@ Pipeline definitions live in `.tekton/`:
 
 Onboard the GitHub repo (`Appservices-perfscale/rhel-db-bench`) as application
 `db-cpt-rhel` / component `db-cpt-rhel` in the `hcc-perfscale-tenant` namespace.
-Konflux publishes to `quay.io/rhcloudperfscale/db-cpt-rhel`.
+Konflux publishes to `quay.io/redhat-user-workloads/hcc-perfscale-tenant/db-cpt-rhel`.
 Configure a release pipeline to promote images to `quay.io/rhcloudperfscale/db-cpt-rhel`.
 
 [MintMaker](https://konflux.pages.redhat.com/docs/users/mintmaker/user.html) reads
