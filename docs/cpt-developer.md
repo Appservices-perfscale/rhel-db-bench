@@ -1,114 +1,117 @@
 # CPT developer guide
 
-How to seed a baseline and run regression checks without hand-editing configs each time.
+How to seed a baseline and run regression checks without editing configs by hand
+every time. For a short local how-to, start with the [root README](../README.md).
 
 ## One-time setup
 
-1. Reserve hosts (`auto-schedule.yaml`) and run `os-setup.yaml` + `setup.yaml` once.
-2. Copy config templates (passwords live in gitignored `archive_cfg.yaml`):
+1. Get hosts (`auto-schedule.yaml` or fill `inventory.local.ini`) and run
+   `os-setup.yaml` + `setup.yaml` once.
+2. Copy config templates (passwords stay gitignored):
    ```bash
    cp pass_or_fail_cfg.yaml.example pass_or_fail_cfg.yaml
    cp archive_cfg.yaml.example archive_cfg.yaml
-   # Set postgresql.password in archive_cfg.yaml (or export PGPASSWORD to override)
+   # Set postgresql.password in archive_cfg.yaml, or: export PGPASSWORD='...'
    ```
-3. Create DB tables: `psql ... -f scripts/db_cpt_rhel_schema.sql`
-4. Controller: `./scripts/install-controller-deps.sh` and `jq`.
+3. Create DB tables once: `psql … -f scripts/db_cpt_rhel_schema.sql`
+4. Controller: `./scripts/install-controller-deps.sh` and `jq`
 
-On Jenkins, set `CPT_ARTIFACT_ROOT=/workspace/ARTIFACTS/DB-CPT-RHEL` (or `${JOB_NAME}`) instead of a local archive path.
+On Jenkins, set `CPT_ARTIFACT_ROOT` (e.g. `/workspace/ARTIFACTS/DB-CPT-RHEL`)
+instead of relying on a local `artifact_storage.root`.
 
-## CPT profile (what gets compared)
+## What gets compared (CPT profile)
 
-`pass_or_fail` history matching uses fields stored on each `master.json` (bench
-RHEL is **not** part of the match — compare on 9.4 uses baseline history from 9.0
-when other profile fields align):
+`pass_or_fail` matches history on these fields — **not** bench RHEL. So a
+compare on 9.4 can use a 9.0 baseline when the rest of the profile matches:
 
 | Field | How to set | Example |
 |-------|------------|---------|
 | Workload name | fixed in playbook | `DB-CPT-RHEL` |
-| Virtual users | `--vu` or first entry in `hammerdb_virtual_users_matrix` | `112` |
-| Hardware cohort | `--hardware` / `cpt_hardware_profile` | `r650`, `r640` |
+| Virtual users | `--vu` or `hammerdb_virtual_users_matrix` | `112` |
+| Hardware cohort | `--hardware` / `cpt_hardware_profile` | `r650` |
 | Optional label | `--label` / `cpt_profile_label` | `staging` |
 
-Runs with the **same profile** are compared for NOPM regression (`check_by_gte_min`: fail only if NOPM drops below historical minimum across prior runs, any bench RHEL).
+Method: `check_by_gte_min` — FAIL only if NOPM drops below the historical
+minimum for that profile.
 
 ## Commands
 
-### VU list in `inventory.ini`
+### VU matrix in `inventory.ini`
 
 ```ini
 hammerdb_virtual_users_matrix=112,224
 hammerdb_matrix_run_count=1
 ```
 
-`baseline` and `compare` **loop this list by default**:
+`baseline` and `compare` loop that list by default:
 
 `site.yml (vu=112) → cleanup → site.yml (vu=224) → cleanup`
 
-Single VU only: `./scripts/cpt-run.sh compare --rhel 9.0 --vu 112`
+One VU: `./scripts/cpt-run.sh compare --rhel 9.0 --vu 112`
 
 ### 1. Establish baseline
 
 ```bash
-./scripts/cpt-run.sh baseline --rhel 9.0
+./scripts/cpt-run.sh baseline --rhel 9.0 --hardware r650
 ```
 
-- Runs `site.yml` per VU in the matrix, then `cleanup.yaml` after each (skip: `CPT_CLEANUP=false`).
-- Skips regression check; sets `result: PASS` on each run.
-- Uploads to PostgreSQL (if `archive_cfg.yaml` exists).
+- Runs `site.yml` per VU, then `cleanup.yaml` (skip with `CPT_CLEANUP=false`)
+- Skips regression check; sets `result: PASS`
+- Uploads to PostgreSQL when `archive_cfg.yaml` is present
 
-Do this once per profile (RHEL + hardware + VU + label). With a matrix, each VU gets its own baseline in PostgreSQL.
+Do this once per profile (hardware + VU + label). Each VU gets its own baseline.
 
-### 2. Compare / regression check
+### 2. Compare
 
 ```bash
-./scripts/cpt-run.sh compare --rhel 9.4
+./scripts/cpt-run.sh compare --rhel 9.4 --hardware r650
 ```
 
-- Same VU sweep, but runs OPL `pass_or_fail` on each run.
-- Sets `result: PASS` or `FAIL` per VU (playbook does not abort on FAIL).
+Same VU sweep, but runs OPL `pass_or_fail` on each run. FAIL does not abort the
+playbook.
 
-Override VU list without editing inventory:
+Override VUs without editing inventory:
 
 ```bash
-./scripts/cpt-run.sh baseline --rhel 9.0 --vus 112,224
+./scripts/cpt-run.sh baseline --rhel 9.0 --hardware r650 --vus 112,224
 ```
 
-`matrix` is an alias for `compare` (same VU sweep).
+`matrix` is an alias for `compare`.
 
-## Equivalent ansible-playbook invocations
+Handy flags: `--skip-os-setup`, `--skip-setup`, `--schedule`,
+`--scalelab-cleanup`, `--workload-name`. Full list: `./scripts/cpt-run.sh --help`.
+
+## Same thing with ansible-playbook
 
 ```bash
 # Baseline
 ansible-playbook playbooks/site.yml \
-  -e os_prep_rhel_release_id=9.0 \
+  -i inventory.ini -i inventory.local.ini \
   -e cpt_hardware_profile=r650 \
   -e cpt_establish_baseline=true
 
 # Compare
 ansible-playbook playbooks/site.yml \
-  -e os_prep_rhel_release_id=9.4 \
+  -i inventory.ini -i inventory.local.ini \
   -e cpt_hardware_profile=r650
 ```
 
-`cpt-run.sh` skips `os-setup.yaml` automatically when every `[bench]` host
-already reports the requested `--rhel` in `rpm -q redhat-release`. Use
-`--skip-os-setup` to force-skip, or change `--rhel` to trigger os-setup (distro-sync or Foreman rebuild).
+`cpt-run.sh` skips `os-setup` when every bench host already reports the
+requested `--rhel`. Use `--skip-os-setup` to force that, or change `--rhel` to
+trigger distro-sync / Foreman rebuild.
 
 ## Changing RHEL on the bench
 
-ScaleLab hosts may arrive on RHEL 9.4 by default. **Same major** moves use
-`distro-sync`. **Different major** (9 → 10) uses **Foreman re-provision**
-automatically when majors differ. If Foreman only has `RHEL 10.0` but you
-request `10.2`, os-setup Foreman-installs `10.0` then distro-syncs to `10.2`.
-Foreman and Badfish credentials are auto-derived from the QUADS assignment by
-`auto-schedule.yaml`.
+Same major (e.g. 9.4 → 9.7): `dnf distro-sync`. Different major (9 → 10):
+Foreman wipe + Badfish PXE. If Foreman only has `RHEL 10.0` and you ask for
+`10.2`, os-setup installs `10.0` then distro-syncs to `10.2`. Credentials come
+from the QUADS assignment when you used `auto-schedule.yaml`.
 
 ```bash
-# Bench 9.4 → 10.2 via Foreman rebuild (client stays on 9.4)
 ./scripts/cpt-run.sh compare --rhel 10.2 --hardware r650
 ```
 
-Optional dated eng compose for post-rebuild same-major pin on RHEL 10:
+Optional dated compose after a RHEL 10 Foreman install:
 
 ```ini
 # [bench:vars]
@@ -116,36 +119,34 @@ os_prep_rhel_compose_name=RHEL-10.2-20260408.1
 ```
 
 ```bash
-# Step by step
 ansible-playbook playbooks/os-setup.yaml -i inventory.ini -i inventory.local.ini \
   --limit bench -e bench_rhel_release_id=10.2
-ansible-playbook playbooks/setup.yaml --limit bench
+ansible-playbook playbooks/setup.yaml -i inventory.ini -i inventory.local.ini --limit bench
 ./scripts/cpt-run.sh compare --rhel 10.2 --hardware r650 --skip-os-setup --skip-setup
 ```
 
-## Where to view results
+## Where to look at results
 
 | Output | Location |
 |--------|----------|
-| NOPM / TPM | `results/<RHEL>_<run_id>-results.json` |
-| Pass/fail | `results/.../<run_id>-master.json` → `"result"` |
-| Raw PCP logs | Same directory, or Jenkins `CPT_ARTIFACT_ROOT/<run_id>/` |
+| NOPM / TPM | `results/…-results.json` |
+| Pass/fail | `…-master.json` → `"result"` |
+| PCP logs | Same dir, or `CPT_ARTIFACT_ROOT/<run_id>/` on Jenkins |
 | Long-term KPI | PostgreSQL `db_cpt_rhel_data` |
-| Decision audit | PostgreSQL `db_cpt_rhel_decisions` |
-| Grafana dashboard | Import `grafana/dashboards/db-cpt-rhel-overview.json` — see [grafana.md](grafana.md) |
+| Decision audit | `db_cpt_rhel_decisions` |
+| Grafana | [grafana.md](grafana.md) |
 
-## Empty history on compare
+## Empty `result` on compare
 
-If you run `compare` before any `baseline` for that profile (same name, VU,
-hardware, and label), `pass_or_fail` has nothing to compare and `result` stays
-`null`. The playbook prints a hint to run `baseline` first with matching flags
-(RHEL on the baseline run can differ from the compare run).
+No matching history for that profile (name + VU + hardware + label) →
+`pass_or_fail` leaves `result` null. Run `baseline` first with the same
+`--hardware` / `--label` / VU. Bench RHEL on the baseline can differ from the
+compare run.
 
 ## Between runs
 
-`cpt-run.sh` runs `cleanup.yaml` after each `site.yml` by default, so the next
-invocation starts from a clean database. To run cleanup manually:
+`cpt-run.sh` runs `cleanup.yaml` after each `site.yml` by default. Manual:
 
 ```bash
-ansible-playbook playbooks/cleanup.yaml
+ansible-playbook playbooks/cleanup.yaml -i inventory.ini -i inventory.local.ini
 ```

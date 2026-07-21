@@ -1,12 +1,11 @@
 # os-setup.yaml — Pin RHEL Compose, Distro-Sync, Reboot
 
-Pins both **bench** and **client** hosts to a specific RHEL nightly compose,
-performs a full `dnf distro-sync`, reboots into the new kernel, and writes
-Ansible facts to the controller for later reporting.
+Puts bench and client on the RHEL build you actually want to measure: same
+major uses `dnf distro-sync`; different major uses a Foreman wipe + PXE
+reinstall. Then it reboots and writes facts for reporting.
 
-Run this playbook **before** `setup.yaml` on fresh or reprovisioned hosts.
-It is the first step that ensures both machines are running the exact RHEL
-build you want to benchmark, eliminating OS-level variance between runs.
+Run this **before** `setup.yaml` on fresh or reprovisioned hosts so both
+machines are on a known compose, not whatever the lab left behind.
 
 ## Quick start
 

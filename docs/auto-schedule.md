@@ -1,9 +1,10 @@
 # auto-schedule.yaml — Reserve ScaleLab Hosts via QUADS
 
-Automatically reserves two bare-metal hosts from the
-[ScaleLab](https://wiki.rdu2.scalelab.redhat.com/) infrastructure using the
-QUADS v3 self-scheduling API. The two hosts become the **bench** (PostgreSQL)
-and **client** (HammerDB) machines for DB-CPT.
+Grabs two bare-metal hosts from
+[ScaleLab](https://wiki.rdu2.scalelab.redhat.com/) via the QUADS v3
+self-scheduling API. First host = **bench** (PostgreSQL), second = **client**
+(HammerDB). They must land on the same rack so network noise stays out of
+NOPM.
 
 ## Quick start
 

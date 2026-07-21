@@ -1,34 +1,43 @@
-# Grafana dashboard — DB-CPT-RHEL
+# Grafana dashboard
 
-Compare CPT benchmark results across two RHEL bench versions (Pipelines-style layout).
+Side-by-side comparison of CPT runs across two bench RHEL versions.
 
 ## Import
 
 1. **Dashboards → New → Import**
 2. Upload `grafana/dashboards/db-cpt-rhel-overview.json`
-3. Map the PostgreSQL datasource (UID `dekgyz85doxdse` in the export, or your own)
-4. **Import** (overwrite if replacing an older version)
+3. Point it at your PostgreSQL datasource (export UID is `dekgyz85doxdse`; remap if needed)
+4. Import (overwrite if replacing an older board)
+
+Apply the view if you have not yet:
+
+```bash
+psql -h HOST -U USER -d DATABASE -f scripts/db_cpt_rhel_grafana_views.sql
+```
 
 ## Filters
 
 | Filter | Role |
 |--------|------|
-| **Baseline RHEL (version 1)** | Reference bench release (e.g. `9.0`) |
-| **Compare RHEL (version 2)** | Release under test (e.g. `9.7`) |
-| **Virtual users** | Load level(s); **All** shows every VU as a separate series |
-| **Hardware** | Bench hardware profile (`R650`, etc.) |
-| **RHEL family** | `RHEL9`, `RHEL8`, … |
+| **Baseline RHEL** | Reference bench release (e.g. `9.0`) |
+| **Compare RHEL** | Release under test (e.g. `9.7`) |
+| **Virtual users** | Load level(s); **All** = one series per VU |
+| **Hardware** | Cohort (`R650`, …) |
+| **RHEL family** | `RHEL9`, `RHEL10`, … |
 
-## Layout (top to bottom)
+## What you see
 
-| Section | What it shows |
-|---------|----------------|
-| **Benchmark results over time** | Side-by-side time series per version: NOPM, TPM, pass/fail (one line per VU) — same pattern as the Pipelines Performance Comparison dashboard |
-| **RHEL comparison by virtual users (latest run per VU)** | Bar charts using `DISTINCT ON (virtual_users, bench_rhel_release)` to pick the **most recent run** per VU per version |
-| **PostgreSQL SUT / HammerDB client** | PCP monitoring from archived runs |
-| **Pass / fail and run history** | Aggregate results and full run table |
+| Section | Content |
+|---------|---------|
+| **Results over time** | NOPM, TPM, pass/fail vs time (per VU) |
+| **Latest by VU** | Bar charts: newest run per VU per version |
+| **SUT / client** | PCP CPU, memory, disk, net from archived runs |
+| **Run history** | Full table including empty/`FAIL`/`PASS` results |
 
-## Upload data
+## Getting data in
+
+`site.yml` uploads automatically when `archive_cfg.yaml` + `PGPASSWORD` are set.
+Manual upload:
 
 ```bash
 export PGPASSWORD='...'
@@ -36,11 +45,12 @@ python3 scripts/upload_db_cpt_result.py results/.../YOUR-master.json \
   --host HOST --database DATABASE --user USER --table db_cpt_rhel_data
 ```
 
-Each upload refreshes `db_cpt_rhel_runs_v` automatically. To update the view only:
+Each upload refreshes `db_cpt_rhel_runs_v`. View only:
 
 ```bash
 python3 scripts/upload_db_cpt_result.py --apply-grafana-views-only \
   --host HOST --database DATABASE --user USER
 ```
 
-Dashboard UID: `db-cpt-rhel`
+If pass/fail shows blank in Grafana, the master row’s `"result"` is null — usually
+no baseline for that profile yet. See [cpt-developer.md](cpt-developer.md).
