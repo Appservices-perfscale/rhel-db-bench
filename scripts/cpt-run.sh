@@ -273,7 +273,7 @@ rhel_release_root() {
     fi
     return
   fi
-  mirror="$(inventory_var os_prep_rhel_release_mirror "https://download.eng.pnq.redhat.com")"
+  mirror="$(inventory_var os_prep_rhel_release_mirror "https://download.eng.rdu2.redhat.com")"
   if [[ -z "$mirror" ]]; then
     echo "error: set os_prep_rhel_release_mirror in inventory.ini [remote:vars]" >&2
     exit 1

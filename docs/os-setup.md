@@ -227,7 +227,7 @@ Per-group variables live in `inventory.ini` under `[bench:vars]` and
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `os_prep_rhel_release_mirror` | no* | `https://download.eng.pnq.redhat.com` | Base mirror; compose prefix is derived as `rhel-<major>/rel-eng/RHEL-<major>` from each host's `os_prep_rhel_release_id` (bench `10.2` → rhel-10; client `9.4` → rhel-9). |
+| `os_prep_rhel_release_mirror` | no* | `https://download.eng.rdu2.redhat.com` | Base mirror (RDU2-local; PNQ often refuses 443 from scalelab); compose prefix is derived as `rhel-<major>/rel-eng/RHEL-<major>` from each host's `os_prep_rhel_release_id` (bench `10.2` → rhel-10; client `9.4` → rhel-9). |
 | `os_prep_rhel_release_root_prefix` | no | — | Optional fixed prefix; overrides auto derivation for that host/group. |
 | `os_prep_rhel_release_root_override` | no | — | Full compose root URL (dated build); skips prefix + `latest-RHEL-*` derivation. |
 | `os_prep_rhel_release_id` | **yes** | — | Expected minor release ID (e.g. `9.7`, `10.2`). Used for assertion checks and URL derivation. |

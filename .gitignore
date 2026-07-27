@@ -15,3 +15,5 @@ results/
 .cursor/
 .claude/
 .venv/
+config.yaml
+report.html

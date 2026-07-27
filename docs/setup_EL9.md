@@ -147,7 +147,7 @@ system's `$releasever`.
 Set this in `[bench:vars]` in `inventory.ini`:
 
 ```ini
-pgdg_deps_baseurl=https://download.eng.pnq.redhat.com/rhel-9/rel-eng/RHEL-9/latest-RHEL-9.8.0/compose/BaseOS/x86_64/os/
+pgdg_deps_baseurl=https://download.eng.rdu2.redhat.com/rhel-9/rel-eng/RHEL-9/latest-RHEL-9.8.0/compose/BaseOS/x86_64/os/
 ```
 
 Point it at any RHEL 9.7+ or 9.8+ compose BaseOS URL. The playbook only pulls

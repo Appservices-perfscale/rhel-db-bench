@@ -16,7 +16,7 @@ os_prep_rhel_release_root_prefix_resolved: >-
     (os_prep_rhel_release_root_prefix | string | trim)
     if (os_prep_rhel_release_root_prefix | default('') | string | trim | length > 0)
     else (
-      (os_prep_rhel_release_mirror | default('https://download.eng.pnq.redhat.com') | string | trim | regex_replace('/$', ''))
+      (os_prep_rhel_release_mirror | default('https://download.eng.rdu2.redhat.com') | string | trim | regex_replace('/$', ''))
       ~ '/rhel-' ~ _os_prep_rhel_major
       ~ '/rel-eng/RHEL-' ~ _os_prep_rhel_major
     )
