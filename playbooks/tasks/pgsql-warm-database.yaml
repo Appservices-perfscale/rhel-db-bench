@@ -4,11 +4,11 @@
 - name: Create pg_prewarm extension in benchmark database
   community.postgresql.postgresql_ext:
     name: pg_prewarm
-    db: "{{ pgsql_benchmark_db }}"
+    login_db: "{{ pgsql_benchmark_db }}"
     login_host: "{{ _pgsql_connect_host }}"
     login_user: "{{ pgsql_superuser }}"
     login_password: "{{ pgsql_superuser_password }}"
-    port: "{{ pgsql_port }}"
+    login_port: "{{ pgsql_port }}"
   no_log: true
 
 - name: Prewarm benchmark relations into shared_buffers
@@ -16,7 +16,7 @@
     login_host: "{{ _pgsql_connect_host }}"
     login_user: "{{ pgsql_superuser }}"
     login_password: "{{ pgsql_superuser_password }}"
-    port: "{{ pgsql_port }}"
+    login_port: "{{ pgsql_port }}"
     login_db: "{{ pgsql_benchmark_db }}"
     query: |
       SELECT sum(pg_prewarm(c.oid, 'buffer'))

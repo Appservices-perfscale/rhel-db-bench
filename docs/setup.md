@@ -57,18 +57,25 @@ PGDATA lives on the root filesystem.
 Installs PostgreSQL from the upstream
 [PGDG Yum repository](https://www.postgresql.org/download/linux/redhat/):
 
-1. **Install PGDG repo RPM** — adds the `pgdg-redhat-repo-latest.noarch.rpm`
+1. **Fix stale PGDG baseurls** (if any) — same rewrite as below, before the
+   first `dnf` call, so leftover repos from a partial run cannot block base
+   package installs.
+2. **Install PGDG repo RPM** — adds the `pgdg-redhat-repo-latest.noarch.rpm`
    for the detected EL major version.
-2. **Disable built-in `postgresql` module** — on EL 8/9, the distro ships a
+3. **Fix PGDG baseurls to EL major** — rewrites
+   `$releasever_major.$releasever_minor` / `$releasever` to the EL major
+   (e.g. `rhel-9`) so metadata hits real PGDG paths (see
+   `tasks/pgdg-fix-releasever.yaml`).
+4. **Disable built-in `postgresql` module** — on EL 8/9, the distro ships a
    DNF module that shadows PGDG packages; this step disables it. Skipped on
    EL 10+ (no modularity).
-3. **Disable unused PGDG repos** — only the repo matching `postgresql_major`
+5. **Disable unused PGDG repos** — only the repo matching `postgresql_major`
    (e.g. `pgdg17`) stays enabled; all others (pgdg10–pgdg19 except the one in
    use) are disabled to speed up metadata fetches.
-4. **Clean DNF metadata** — forces a fresh cache after repo changes.
-5. **Install server + contrib** — `postgresql<major>-server` and
+6. **Clean DNF metadata** — forces a fresh cache after repo changes.
+7. **Install server + contrib** — `postgresql<major>-server` and
    `postgresql<major>-contrib`.
-6. **Install `python3-psycopg2`** — required by the Ansible
+8. **Install `python3-psycopg2`** — required by the Ansible
    `community.postgresql` modules used later in the playbook.
 
 #### 5. PostgreSQL data directory and service
@@ -179,7 +186,7 @@ or `[remote:vars]`.
 |---|---|---|
 | **Target** | RHEL 10.x, 9.7+, or any release where PGDG deps are satisfied by the base OS | RHEL 9.0 (and potentially other early 9.x minors before 9.7) |
 | **PGDG deps workaround** | Not present — system libs are new enough | Included — pulls `openldap`, `openssl-libs`, `openssh-server/clients` from a newer compose via a temporary repo |
-| **`$releasever` fix** | Not needed — DNF resolves `$releasever` correctly on latest releases | Two `sed` passes to replace `$releasever` with the EL major in PGDG repo files, because RHEL 9.0 resolves it to `9.0` instead of `9` |
+| **PGDG releasever fix** | Same `tasks/pgdg-fix-releasever.yaml` (rewrites `$releasever` / `$releasever_major.$releasever_minor` → EL major) | Same task, plus early pass before base packages and `pgdg_deps` library workaround for &lt; 9.7 |
 | **Inventory extras** | None | Requires `pgdg_deps_baseurl` pointing to a RHEL 9.8+ compose BaseOS |
 
 See [setup_EL9.md](setup_EL9.md) for details on the RHEL 9.0 workaround.

@@ -30,7 +30,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: >-
           SELECT pg_terminate_backend(pid)
@@ -49,7 +49,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         force: true
       when: _pgsql_service_status.status.ActiveState == 'active'
 
@@ -60,7 +60,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
       when: _pgsql_service_status.status.ActiveState == 'active'
 
     - name: Grant privileges on recreated benchmark database
@@ -68,7 +68,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: GRANT ALL PRIVILEGES ON DATABASE "{{ pgsql_benchmark_db }}" TO "{{ pgsql_benchmark_user }}"
       when: _pgsql_service_status.status.ActiveState == 'active'
@@ -78,7 +78,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: "{{ pgsql_benchmark_db }}"
         query: GRANT CREATE ON SCHEMA public TO "{{ pgsql_benchmark_user }}"
       when: _pgsql_service_status.status.ActiveState == 'active'
@@ -88,7 +88,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: SELECT pg_stat_reset()
         autocommit: true
@@ -99,7 +99,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: CHECKPOINT
         autocommit: true

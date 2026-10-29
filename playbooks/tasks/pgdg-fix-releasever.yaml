@@ -1,0 +1,26 @@
+---
+# PGDG ships paths like rhel-$releasever- or (newer RPMs)
+# rhel-$releasever_major.$releasever_minor-. Mirrors only publish
+# rhel-<major>-x86_64 (e.g. rhel-9), so RHEL 9.4 → rhel-9.4-x86_64 404s.
+# Rewrite both patterns to the EL major before any dnf metadata fetch.
+- name: Check for PGDG repo file
+  ansible.builtin.stat:
+    path: /etc/yum.repos.d/pgdg-redhat-all.repo
+  register: _pgdg_repo_file
+  changed_when: false
+
+- name: Fix PGDG repo URLs to use EL major (not minor releasever)
+  when: _pgdg_repo_file.stat.exists | default(false)
+  ansible.builtin.replace:
+    path: /etc/yum.repos.d/pgdg-redhat-all.repo
+    regexp: "{{ item.regexp }}"
+    replace: "{{ item.replace }}"
+  loop:
+    # Newer pgdg-redhat-repo: rhel-$releasever_major.$releasever_minor-
+    - regexp: 'rhel-\$releasever_major\.\$releasever_minor-'
+      replace: "rhel-{{ _pgdg_el_major }}-"
+    # Older pgdg-redhat-repo: rhel-$releasever-
+    - regexp: 'rhel-\$releasever-'
+      replace: "rhel-{{ _pgdg_el_major }}-"
+  loop_control:
+    label: "{{ item.replace }}"

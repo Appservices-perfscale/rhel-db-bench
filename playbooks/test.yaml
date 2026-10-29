@@ -67,7 +67,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: CHECKPOINT
         autocommit: true
@@ -77,7 +77,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: "{{ pgsql_benchmark_db }}"
         query: VACUUM
         autocommit: true
@@ -218,7 +218,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
         query: CHECKPOINT
         autocommit: true
@@ -228,7 +228,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: "{{ pgsql_benchmark_db }}"
         query: VACUUM
         autocommit: true

@@ -1,15 +1,18 @@
 # Managed by playbooks/os-setup.yaml — do not edit by hand.
+# sslverify=0: eng compose mirrors use RH IT CA; ScaleLab images often lack it.
 [baseos]
 name=BaseOS
 baseurl={{ os_prep_rhel_release_root }}/compose/BaseOS/{{ os_prep_rhel_arch }}/os/
 enabled=1
 gpgcheck=0
+sslverify={{ 1 if (os_prep_sslverify | default(false) | bool) else 0 }}
 
 [appstream]
 name=AppStream
 baseurl={{ os_prep_rhel_release_root }}/compose/AppStream/{{ os_prep_rhel_arch }}/os/
 enabled=1
 gpgcheck=0
+sslverify={{ 1 if (os_prep_sslverify | default(false) | bool) else 0 }}
 
 {% if os_prep_include_crb | default(false) | bool %}
 [crb]
@@ -17,4 +20,5 @@ name=CRB
 baseurl={{ os_prep_rhel_release_root }}/compose/CRB/{{ os_prep_rhel_arch }}/os/
 enabled=1
 gpgcheck=0
+sslverify={{ 1 if (os_prep_sslverify | default(false) | bool) else 0 }}
 {% endif %}

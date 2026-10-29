@@ -43,17 +43,15 @@ A second issue is that RHEL 9.0 resolves the DNF variable `$releasever` to
 The workaround runs **before** the PGDG repo RPM is installed and consists of
 these steps:
 
-### 1. Fix stale `$releasever` from prior partial runs
+### 1. Fix stale PGDG releasever tokens from prior partial runs
 
-```yaml
-- name: Fix stale PGDG repo releasever from prior partial runs
-  command: sed -i 's|/rhel-$releasever-|/rhel-{{ _pgdg_el_major }}-|g'
-           /etc/yum.repos.d/pgdg-redhat-all.repo
-```
+Includes `tasks/pgdg-fix-releasever.yaml`, which rewrites both:
 
-If a previous setup attempt left behind a PGDG repo file with the broken
-`$releasever` token, this replaces it with the correct EL major (`9`) so
-subsequent `dnf` commands can reach the PGDG mirrors.
+- older `rhel-$releasever-` → `rhel-9-`
+- newer `rhel-$releasever_major.$releasever_minor-` → `rhel-9-`
+
+PGDG only publishes `rhel-<major>-x86_64`. On RHEL 9.4 the new tokens expand
+to `rhel-9.4-x86_64` and metadata fetches 404 until rewritten.
 
 ### 2. Check whether the dependency repo is needed
 
@@ -80,6 +78,7 @@ operator which variable to set and what URL format to use.
   yum_repository:
     name: pgdg-deps
     baseurl: "{{ pgdg_deps_baseurl }}"
+    sslverify: false  # eng compose CA often missing on ScaleLab images
     gpgcheck: false
     enabled: false
 ```
@@ -129,18 +128,11 @@ updates or `os-setup.yaml` runs that pin the host to RHEL 9.0.
 The `releasever` parameter forces DNF to use `9` instead of the system's
 `9.0`, so the PGDG RPM's `%post` scriptlets write correct repo URLs.
 
-### 9. Fix `$releasever` in the installed repo files
+### 9. Fix releasever tokens in the installed repo files
 
-```yaml
-- name: Fix PGDG repo files to use EL major version instead of pinned releasever
-  command: sed -i 's|/rhel-$releasever-|/rhel-{{ _pgdg_el_major }}-|g'
-           /etc/yum.repos.d/pgdg-redhat-all.repo
-```
-
-Even with the pinned `releasever` during install, the repo file templates still
-embed `$releasever`. This sed replaces every occurrence with the literal major
-version so future `dnf` operations resolve correctly regardless of the
-system's `$releasever`.
+Re-runs `tasks/pgdg-fix-releasever.yaml` after the PGDG RPM install so newly
+written baseurls use `rhel-<major>-` instead of `$releasever` /
+`$releasever_major.$releasever_minor`.
 
 ## Required inventory variable
 

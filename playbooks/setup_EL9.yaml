@@ -27,13 +27,8 @@
       - disk.all.read
   tasks:
     # --- System preparation ---
-    - name: Fix stale PGDG repo releasever from prior partial runs
-      ansible.builtin.command: >-
-        sed -i 's|/rhel-$releasever-|/rhel-{{ _pgdg_el_major }}-|g'
-        /etc/yum.repos.d/pgdg-redhat-all.repo
-      register: _pgdg_stale_fix
-      changed_when: _pgdg_stale_fix.rc == 0
-      failed_when: false
+    - name: Fix stale PGDG repo URLs from prior partial runs
+      ansible.builtin.include_tasks: tasks/pgdg-fix-releasever.yaml
 
     - name: Install base packages for provisioning
       ansible.builtin.dnf:
@@ -145,6 +140,8 @@
         description: "Temporary BaseOS for PGDG library deps (openldap, openssl, openssh)"
         baseurl: "{{ pgdg_deps_baseurl }}"
         gpgcheck: false
+        # Eng compose mirrors (download.eng.*) use RH IT CA; lab images often lack it.
+        sslverify: false
         enabled: false
       when: _pgdg_needs_deps_repo | bool
 
@@ -188,12 +185,8 @@
         disable_gpg_check: true
         releasever: "{{ _pgdg_el_major }}"
 
-    - name: Fix PGDG repo files to use EL major version instead of pinned releasever
-      ansible.builtin.command: >-
-        sed -i 's|/rhel-$releasever-|/rhel-{{ _pgdg_el_major }}-|g'
-        /etc/yum.repos.d/pgdg-redhat-all.repo
-      register: _pgdg_fix_releasever
-      changed_when: _pgdg_fix_releasever.rc == 0
+    - name: Fix PGDG repo URLs to use EL major version
+      ansible.builtin.include_tasks: tasks/pgdg-fix-releasever.yaml
 
     - name: Disable the built-in PostgreSQL module (EL 8/9 modularity)
       ansible.builtin.command: dnf -qy module disable postgresql
@@ -339,8 +332,8 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: postgres
+        login_port: "{{ pgsql_port }}"
+        login_db: postgres
       no_log: true
 
     - name: Create benchmark database
@@ -350,7 +343,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
       no_log: true
 
     - name: Grant all privileges on benchmark database to benchmark user
@@ -358,8 +351,8 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: postgres
+        login_port: "{{ pgsql_port }}"
+        login_db: postgres
         query: GRANT ALL PRIVILEGES ON DATABASE "{{ pgsql_benchmark_db }}" TO "{{ pgsql_benchmark_user }}"
       no_log: true
 
@@ -368,8 +361,8 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
-        db: "{{ pgsql_benchmark_db }}"
+        login_port: "{{ pgsql_port }}"
+        login_db: "{{ pgsql_benchmark_db }}"
         query: GRANT CREATE ON SCHEMA public TO "{{ pgsql_benchmark_user }}"
       no_log: true
 
@@ -381,7 +374,7 @@
         login_host: "{{ _pgsql_connect_host }}"
         login_user: "{{ pgsql_superuser }}"
         login_password: "{{ pgsql_superuser_password }}"
-        port: "{{ pgsql_port }}"
+        login_port: "{{ pgsql_port }}"
         login_db: postgres
       register: pgsql_listen_alter
       no_log: true
@@ -598,5 +591,5 @@
         login_port: "{{ pgsql_port }}"
         login_user: "{{ pgsql_benchmark_user }}"
         login_password: "{{ pgsql_benchmark_password }}"
-        db: "{{ pgsql_benchmark_db }}"
+        login_db: "{{ pgsql_benchmark_db }}"
       no_log: true
